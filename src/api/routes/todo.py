@@ -43,7 +43,7 @@ from src.application.dtos.todo_dto import TodoCreateDTO, TodoUpdateDTO, TodoResp
 
 # Imports API (dépendances et sécurité)
 from src.api.dependencies import get_todo_use_cases, get_current_user
-from src.infrastructure.security.jwt import TokenData
+from src.infrastructure.auth.jwt_service import TokenData
 
 # Router avec préfixe pour grouper tous les endpoints todos
 router = APIRouter(prefix="/todos", tags=["todos"])
@@ -51,12 +51,13 @@ router = APIRouter(prefix="/todos", tags=["todos"])
 
 # ===== ENDPOINTS DE CONSULTATION =====
 
+
 @router.get(
     "/all",
     response_model=List[TodoResponseDTO],
     status_code=status.HTTP_200_OK,
     summary="Liste toutes mes todos",
-    description="Récupère toutes les todos appartenant à l'utilisateur connecté"
+    description="Récupère toutes les todos appartenant à l'utilisateur connecté",
 )
 async def get_all_todos(
     use_cases: TodoUseCases = Depends(get_todo_use_cases),
@@ -102,7 +103,14 @@ async def get_all_todos(
             }
         ]
     """
-    return await use_cases.get_all_todos_by_owner(current_user.user_id)
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    return await use_cases.get_all_todos_by_owner(user_id)
 
 
 @router.get(
@@ -110,7 +118,7 @@ async def get_all_todos(
     response_model=TodoResponseDTO,
     status_code=status.HTTP_200_OK,
     summary="Récupère une todo spécifique",
-    description="Récupère le détail d'une todo par son ID (seulement si elle appartient à l'utilisateur)"
+    description="Récupère le détail d'une todo par son ID (seulement si elle appartient à l'utilisateur)",
 )
 async def get_todo(
     todo_id: int = Path(..., gt=0, description="ID de la todo à récupérer"),
@@ -150,23 +158,30 @@ async def get_todo(
         GET /todos/1
         Authorization: Bearer eyJ0eXAiOiJKV1Q...
     """
-    todo = await use_cases.get_todo_by_id_and_owner(todo_id, current_user.user_id)
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    todo = await use_cases.get_todo_by_id_and_owner(todo_id, user_id)
     if not todo:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Todo not found or not yours"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found or not yours"
         )
     return todo
 
 
 # ===== ENDPOINTS DE MODIFICATION =====
 
+
 @router.post(
     "/create",
     response_model=TodoResponseDTO,
     status_code=status.HTTP_201_CREATED,
     summary="Crée une nouvelle todo",
-    description="Crée une nouvelle todo avec les données fournies"
+    description="Crée une nouvelle todo avec les données fournies",
 )
 async def create_todo(
     use_cases: TodoUseCases = Depends(get_todo_use_cases),
@@ -217,7 +232,14 @@ async def create_todo(
             "completed": false
         }
     """
-    return await use_cases.create_todo(todo_create, current_user.user_id)
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    return await use_cases.create_todo(todo_create, user_id)
 
 
 @router.patch(
@@ -225,13 +247,15 @@ async def create_todo(
     response_model=TodoResponseDTO,
     status_code=status.HTTP_200_OK,
     summary="Mise à jour partielle d'une todo",
-    description="Met à jour seulement les champs fournis. Les autres restent inchangés."
+    description="Met à jour seulement les champs fournis. Les autres restent inchangés.",
 )
 async def update_todo(
     todo_id: int = Path(..., gt=0, description="ID de la todo à modifier"),
     use_cases: TodoUseCases = Depends(get_todo_use_cases),
     current_user: TokenData = Security(get_current_user, scopes=["todos:write"]),
-    todo_update: TodoUpdateDTO = Body(..., description="Champs à mettre à jour (tous optionnels)"),
+    todo_update: TodoUpdateDTO = Body(
+        ..., description="Champs à mettre à jour (tous optionnels)"
+    ),
 ):
     """
     Endpoint pour la mise à jour partielle d'une todo (PATCH).
@@ -288,22 +312,29 @@ async def update_todo(
         PATCH /todos/1
         {"title": "Urgent!", "priority": 5}
     """
-    todo = await use_cases.update_todo(todo_id, todo_update, current_user.user_id)
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    todo = await use_cases.update_todo(todo_id, todo_update, user_id)
     if not todo:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Todo not found or not yours"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found or not yours"
         )
     return todo
 
 
 # ===== ENDPOINTS DE SUPPRESSION =====
 
+
 @router.delete(
     "/delete",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Supprime une todo",
-    description="Supprime définitivement une todo (action irréversible)"
+    description="Supprime définitivement une todo (action irréversible)",
 )
 async def delete_todo(
     id: int = Query(..., gt=0, description="ID de la todo à supprimer"),
@@ -352,9 +383,15 @@ async def delete_todo(
         Le scope 'todos:delete' est distinct de 'todos:write' pour
         permettre un contrôle granulaire des permissions.
     """
-    deleted = await use_cases.delete_todo(id, current_user.user_id)
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    deleted = await use_cases.delete_todo(id, user_id)
     if not deleted:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Todo not found or not yours"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found or not yours"
         )

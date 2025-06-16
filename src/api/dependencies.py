@@ -36,9 +36,10 @@ from src.infrastructure.database.sqlite.user_repository import SQLiteUserReposit
 
 # Imports Application (Use Cases)
 from src.application.use_cases.todo_use_cases import TodoUseCases
+from src.application.use_cases.auth_use_cases import AuthUseCases
 
 # Imports Sécurité (JWT)
-from src.infrastructure.security.jwt import verify_token, TokenData
+from src.infrastructure.auth.jwt_service import JWTService, verify_token, TokenData
 
 
 # ===== SCHÉMAS D'AUTHENTIFICATION =====
@@ -85,10 +86,11 @@ Utilisation :
 
 # ===== DÉPENDANCES D'AUTHENTIFICATION =====
 
+
 async def get_current_user(
     security_scopes: SecurityScopes,
     token: Annotated[str, Depends(oauth2_scheme)],
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> TokenData:
     """
     Dépendance centrale pour l'authentification et l'autorisation.
@@ -156,6 +158,9 @@ async def get_current_user(
     token_data = verify_token(token)
 
     # Étape 2 : Vérification de l'existence de l'utilisateur en base
+    if not token_data.username:
+        raise credentials_exception
+
     user_repo = SQLiteUserRepository(db)
     user = await user_repo.get_user_by_username(token_data.username)
     if not user:
@@ -179,6 +184,7 @@ async def get_current_user(
 
 
 # ===== DÉPENDANCES MÉTIER =====
+
 
 def get_todo_use_cases(
     db: Annotated[Session, Depends(get_db)],
@@ -233,3 +239,29 @@ def get_todo_use_cases(
 
     # Injection du repository dans les Use Cases (inversion de dépendance)
     return TodoUseCases(todo_repository)
+
+
+def get_auth_use_cases(
+    db: Annotated[Session, Depends(get_db)],
+) -> AuthUseCases:
+    """
+    Factory pour créer une instance des Use Cases Auth avec injection de dépendances.
+
+    Args:
+        db (Session): Session SQLAlchemy injectée automatiquement par get_db()
+
+    Returns:
+        AuthUseCases: Instance configurée avec les services requis
+    """
+    from src.infrastructure.auth.jwt_service import JWTService
+    from src.infrastructure.auth.password_service import PasswordService
+
+    # Création du repository avec la session injectée
+    user_repository = SQLiteUserRepository(db)
+
+    # Création des services requis
+    jwt_service = JWTService()
+    password_service = PasswordService()
+
+    # Injection de toutes les dépendances dans les Use Cases
+    return AuthUseCases(user_repository, jwt_service, password_service)

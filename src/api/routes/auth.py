@@ -20,7 +20,7 @@ Principes Clean Architecture :
 """
 
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -29,28 +29,62 @@ from starlette import status
 # Imports Infrastructure (injectés via dépendances)
 from src.infrastructure.database.sqlite.config import get_db
 from src.infrastructure.database.sqlite.user_repository import SQLiteUserRepository
-from src.infrastructure.security.jwt import (
-    Token,
-    create_access_token,
-    verify_password,
-)
+from src.infrastructure.auth.jwt_service import Token, JWTService
+from src.infrastructure.auth.password_service import PasswordService
 from src.infrastructure.config import get_settings
 
 # Imports Domain (entités métier)
 from src.domain.entities.user import User
 
 # Imports Application (DTOs et Use Cases)
-from src.application.dtos.user_dto import UserCreateDTO, UserResponseDTO
+from src.application.dtos.user_dto import UserCreateDTO, UserDetailDTO
+from src.application.dtos.auth_dto import UserResponseDTO
 from src.application.use_cases.user_use_cases import UserUseCases
 
 # Configuration globale de l'application
 settings = get_settings()
 
+# Services globaux pour les fonctions utilitaires
+password_service = PasswordService()
+jwt_service = JWTService()
+
 # Router FastAPI avec tag pour regrouper dans la documentation
 router = APIRouter(tags=["authentication"])
 
 
+# ===== FONCTIONS UTILITAIRES =====
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """
+    Vérifie si le mot de passe en clair correspond au hash.
+
+    Args:
+        plain_password (str): Mot de passe en clair
+        hashed_password (str): Hash du mot de passe stocké
+
+    Returns:
+        bool: True si le mot de passe correspond
+    """
+    return password_service.verify_password(plain_password, hashed_password)
+
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """
+    Crée un token JWT avec les données fournies.
+
+    Args:
+        data (dict): Données à encoder dans le token
+        expires_delta (Optional[timedelta]): Durée de validité du token
+
+    Returns:
+        str: Token JWT encodé
+    """
+    return jwt_service.create_access_token(data, expires_delta)
+
+
 # ===== INJECTION DE DÉPENDANCES =====
+
 
 async def get_user_use_cases(db: Session = Depends(get_db)):
     """
@@ -78,16 +112,16 @@ async def get_user_use_cases(db: Session = Depends(get_db)):
 
 # ===== ENDPOINTS D'AUTHENTIFICATION =====
 
+
 @router.post(
     "/register",
     response_model=UserResponseDTO,
     status_code=status.HTTP_201_CREATED,
     summary="Inscription d'un nouvel utilisateur",
-    description="Crée un compte utilisateur avec email, username et mot de passe"
+    description="Crée un compte utilisateur avec email, username et mot de passe",
 )
 async def register_user(
-    user_data: UserCreateDTO,
-    use_cases: UserUseCases = Depends(get_user_use_cases)
+    user_data: UserCreateDTO, use_cases: UserUseCases = Depends(get_user_use_cases)
 ):
     """
     Endpoint d'inscription pour créer un nouveau compte utilisateur.
@@ -129,15 +163,13 @@ async def register_user(
     # Vérification unicité email - prévient les comptes multiples
     if await use_cases.get_user_by_email(user_data.email):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered"
         )
 
     # Vérification unicité username - prévient les conflits d'identification
     if await use_cases.get_user_by_username(user_data.username):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already taken"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Username already taken"
         )
 
     try:
@@ -149,17 +181,14 @@ async def register_user(
 
     except ValueError as e:
         # Erreurs métier remontées par les Use Cases
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.post(
     "/token",
     response_model=Token,
     summary="Connexion utilisateur",
-    description="Authentifie un utilisateur et retourne un token JWT avec scopes"
+    description="Authentifie un utilisateur et retourne un token JWT avec scopes",
 )
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
@@ -227,8 +256,7 @@ async def login_for_access_token(
     # Étape 3 : Vérification statut du compte
     if not user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user"
         )
 
     # Étape 4 : Mise à jour dernière connexion (audit + sécurité)
@@ -245,9 +273,9 @@ async def login_for_access_token(
     access_token = create_access_token(
         data={
             "sub": user.username,  # Subject = identifiant utilisateur
-            "scopes": scopes       # Permissions accordées
+            "scopes": scopes,  # Permissions accordées
         },
-        expires_delta=access_token_expires
+        expires_delta=access_token_expires,
     )
 
     # Retour du token au format OAuth2 standard

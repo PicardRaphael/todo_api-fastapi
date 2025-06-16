@@ -2,13 +2,14 @@ from typing import Optional
 from src.domain.entities.user import User
 from src.domain.repositories.user_repository import UserRepository
 from src.application.dtos.user_dto import UserCreateDTO
-from src.infrastructure.security.jwt import get_password_hash
+from src.infrastructure.auth.password_service import PasswordService
 from datetime import datetime
 
 
 class UserUseCases:
     def __init__(self, user_repository: UserRepository):
         self.user_repository = user_repository
+        self.password_service = PasswordService()
 
     async def register_user(self, user_create: UserCreateDTO) -> User:
         # Vérifier si l'utilisateur existe déjà
@@ -16,7 +17,7 @@ class UserUseCases:
             raise ValueError("Email already registered")
         if await self.user_repository.get_user_by_username(user_create.username):
             raise ValueError("Username already taken")
-        hashed_password = get_password_hash(user_create.password)
+        hashed_password = self.password_service.hash_password(user_create.password)
         new_user = User(
             email=user_create.email,
             username=user_create.username,

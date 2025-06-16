@@ -9,7 +9,9 @@ class UserCreateDTO(BaseModel):
     password: str = Field(..., description="User password")
 
 
-class UserResponseDTO(BaseModel):
+class UserDetailDTO(BaseModel):
+    """DTO détaillé pour les informations utilisateur avec champs admin."""
+
     id: Optional[int] = Field(None, description="The unique identifier of the user")
     email: EmailStr = Field(..., description="User's email address")
     username: str = Field(..., description="Username for login")
