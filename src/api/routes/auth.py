@@ -1,282 +1,304 @@
 """
-Routes d'Authentification - Couche API (Clean Architecture)
+Simplified Auth Routes - Hybrid Architecture Implementation
 
-Ce module expose les endpoints REST pour l'authentification des utilisateurs :
-- POST /register : Inscription d'un nouvel utilisateur
-- POST /token : Connexion et génération de token JWT
+This module demonstrates simplified authentication routes that delegate
+all business logic to intelligent controllers, maintaining clean separation
+of concerns.
 
-Sécurité implémentée :
-- Validation Pydantic des données entrantes
-- Hachage bcrypt des mots de passe (jamais en clair)
-- Tokens JWT avec expiration et scopes
-- Vérification unicité email/username
-- Mise à jour timestamp de dernière connexion
+Key principles:
+- Routes handle only HTTP routing and dependency injection
+- Controllers coordinate authentication business logic
+- Middleware handles security and logging concerns
+- Clean error handling through controller layer
 
-Principes Clean Architecture :
-- Dépend uniquement de la couche Application (Use Cases)
-- Convertit entre HTTP et objets métier (DTOs)
-- Gère les codes de statut et erreurs HTTP
-- Ne connaît pas les détails de persistance
+Benefits:
+- Consistent error responses
+- Centralized validation logic
+- Better testability
+- Improved maintainability
 """
 
-from datetime import timedelta
-from typing import Annotated, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, status, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
-from starlette import status
 
-# Imports Infrastructure (injectés via dépendances)
-from src.infrastructure.database.sqlite.config import get_db
-from src.infrastructure.database.sqlite.user_repository import SQLiteUserRepository
-from src.infrastructure.auth.jwt_service import Token, JWTService
-from src.infrastructure.auth.password_service import PasswordService
-from src.infrastructure.config import get_settings
+# Application layer
+from src.application.use_cases.auth_use_cases import AuthUseCases
+from src.application.dtos.auth_dto import (
+    RegisterRequestDTO,
+    LoginResponseDTO,
+    TokenResponseDTO,
+    UserResponseDTO,
+)
 
-# Imports Domain (entités métier)
-from src.domain.entities.user import User
+# Presentation layer - intelligent controllers
+from src.presentation.controllers.auth_controller import AuthController
 
-# Imports Application (DTOs et Use Cases)
-from src.application.dtos.user_dto import UserCreateDTO, UserDetailDTO
-from src.application.dtos.auth_dto import UserResponseDTO
-from src.application.use_cases.user_use_cases import UserUseCases
+# API dependencies
+from src.api.dependencies import get_auth_use_cases, get_current_user
+from src.infrastructure.auth.jwt_service import TokenData
 
-# Configuration globale de l'application
-settings = get_settings()
+# Shared logging
+from src.shared.logging import get_logger
 
-# Services globaux pour les fonctions utilitaires
-password_service = PasswordService()
-jwt_service = JWTService()
-
-# Router FastAPI avec tag pour regrouper dans la documentation
-router = APIRouter(tags=["authentication"])
+# Router configuration
+router = APIRouter(prefix="/auth", tags=["auth"])
+logger = get_logger("routes.auth")
 
 
-# ===== FONCTIONS UTILITAIRES =====
+# ===== DEPENDENCY INJECTION =====
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
+async def get_auth_controller(
+    use_cases: AuthUseCases = Depends(get_auth_use_cases),
+) -> AuthController:
     """
-    Vérifie si le mot de passe en clair correspond au hash.
+    Dependency injection for AuthController.
 
-    Args:
-        plain_password (str): Mot de passe en clair
-        hashed_password (str): Hash du mot de passe stocké
-
-    Returns:
-        bool: True si le mot de passe correspond
+    Provides a fully configured auth controller with all dependencies.
     """
-    return password_service.verify_password(plain_password, hashed_password)
+    return AuthController(use_cases, logger)
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """
-    Crée un token JWT avec les données fournies.
-
-    Args:
-        data (dict): Données à encoder dans le token
-        expires_delta (Optional[timedelta]): Durée de validité du token
-
-    Returns:
-        str: Token JWT encodé
-    """
-    return jwt_service.create_access_token(data, expires_delta)
-
-
-# ===== INJECTION DE DÉPENDANCES =====
-
-
-async def get_user_use_cases(db: Session = Depends(get_db)):
-    """
-    Factory pour créer une instance des Use Cases User.
-
-    Cette fonction implémente l'injection de dépendance :
-    1. Récupère une session de base de données
-    2. Crée le repository SQLite avec cette session
-    3. Injecte le repository dans les Use Cases
-
-    Pattern Dependency Injection :
-    - Respecte l'inversion de dépendance (DIP)
-    - Facilite les tests (mock des dépendances)
-    - Permet de changer d'implémentation facilement
-
-    Args:
-        db (Session): Session SQLAlchemy injectée par FastAPI
-
-    Returns:
-        UserUseCases: Instance configurée avec le repository SQLite
-    """
-    repo = SQLiteUserRepository(db)
-    return UserUseCases(repo)
-
-
-# ===== ENDPOINTS D'AUTHENTIFICATION =====
+# ===== SIMPLIFIED AUTHENTICATION ROUTES =====
 
 
 @router.post(
     "/register",
     response_model=UserResponseDTO,
     status_code=status.HTTP_201_CREATED,
-    summary="Inscription d'un nouvel utilisateur",
-    description="Crée un compte utilisateur avec email, username et mot de passe",
+    summary="Register new user (Simplified)",
+    description="Register a new user account - Delegates to controller",
 )
-async def register_user(
-    user_data: UserCreateDTO, use_cases: UserUseCases = Depends(get_user_use_cases)
+async def register(
+    user_data: RegisterRequestDTO = Body(..., description="User registration data"),
+    controller: AuthController = Depends(get_auth_controller),
 ):
     """
-    Endpoint d'inscription pour créer un nouveau compte utilisateur.
+    Simplified user registration route.
 
-    🔄 WORKFLOW D'INSCRIPTION :
-    1. Validation des données avec UserCreateDTO (Pydantic)
-    2. Vérification unicité email et username
-    3. Hachage sécurisé du mot de passe (bcrypt)
-    4. Création de l'utilisateur en base
-    5. Retour des données publiques (sans mot de passe)
+    This route demonstrates the hybrid architecture approach:
+    - Minimal HTTP handling
+    - Complete delegation to intelligent controller
+    - Controller handles validation, business rules, error handling
+    - No manual password hashing or user creation logic
 
-    🛡️ SÉCURITÉ :
-    - Email et username uniques (prévient les doublons)
-    - Mot de passe hashé avec bcrypt (jamais stocké en clair)
-    - Validation format email avec EmailStr
-    - Données sensibles filtrées dans la réponse
-
-    Args:
-        user_data (UserCreateDTO): Données d'inscription validées par Pydantic
-        use_cases (UserUseCases): Use cases injectés pour la logique métier
-
-    Returns:
-        UserResponseDTO: Données publiques de l'utilisateur créé (sans mot de passe)
-
-    Raises:
-        HTTPException 400: Email déjà utilisé
-        HTTPException 400: Username déjà pris
-        HTTPException 400: Erreur de validation
-        HTTPException 500: Erreur serveur
-
-    Example:
-        POST /register
-        {
-            "email": "user@example.com",
-            "username": "monusername",
-            "password": "motdepasse123"
-        }
+    The route is purely focused on HTTP routing.
     """
-    # Vérification unicité email - prévient les comptes multiples
-    if await use_cases.get_user_by_email(user_data.email):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered"
-        )
+    return await controller.register_user(user_data)
 
-    # Vérification unicité username - prévient les conflits d'identification
-    if await use_cases.get_user_by_username(user_data.username):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Username already taken"
-        )
 
-    try:
-        # Création de l'utilisateur via Use Cases (logique métier)
-        created_user = await use_cases.register_user(user_data)
+@router.post(
+    "/login",
+    response_model=LoginResponseDTO,
+    status_code=status.HTTP_200_OK,
+    summary="User login (Simplified)",
+    description="Authenticate user and return access token - Delegates to controller",
+)
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    controller: AuthController = Depends(get_auth_controller),
+):
+    """
+    Simplified user login route.
 
-        # Conversion entité → DTO pour la réponse (filtre les données sensibles)
-        return UserResponseDTO.model_validate(created_user)
-
-    except ValueError as e:
-        # Erreurs métier remontées par les Use Cases
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    Notice how clean this becomes:
+    - No password verification logic
+    - No token generation logic
+    - No manual error handling
+    - Controller handles all authentication complexity
+    """
+    return await controller.authenticate_user(form_data.username, form_data.password)
 
 
 @router.post(
     "/token",
-    response_model=Token,
-    summary="Connexion utilisateur",
-    description="Authentifie un utilisateur et retourne un token JWT avec scopes",
+    response_model=TokenResponseDTO,
+    status_code=status.HTTP_200_OK,
+    summary="Get access token (Simplified)",
+    description="OAuth2 compatible token endpoint - Delegates to controller",
 )
-async def login_for_access_token(
-    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    use_cases: UserUseCases = Depends(get_user_use_cases),
+async def get_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    controller: AuthController = Depends(get_auth_controller),
 ):
     """
-    Endpoint de connexion générant un token JWT pour l'authentification.
+    Simplified OAuth2 token endpoint.
 
-    🔄 WORKFLOW DE CONNEXION :
-    1. Récupération utilisateur par username
-    2. Vérification mot de passe avec bcrypt
-    3. Contrôle statut actif du compte
-    4. Mise à jour timestamp dernière connexion
-    5. Génération token JWT avec scopes
-    6. Retour du token avec type "bearer"
-
-    🛡️ SÉCURITÉ JWT :
-    - Token avec expiration configurable (défaut 30min)
-    - Scopes granulaires pour les permissions
-    - Signature cryptographique (HS256)
-    - Format Bearer standard OAuth2
-
-    📊 SCOPES INCLUS :
-    - todos:read : Lecture des todos
-    - todos:write : Création/modification des todos
-    - todos:delete : Suppression des todos
-    - admin : Privilèges administrateur (si superuser)
-
-    Args:
-        form_data (OAuth2PasswordRequestForm): Formulaire standard OAuth2
-            (username + password via form-data)
-        use_cases (UserUseCases): Use cases pour la logique d'authentification
-
-    Returns:
-        Token: Objet contenant access_token et token_type
-
-    Raises:
-        HTTPException 401: Identifiants incorrects
-        HTTPException 400: Compte désactivé
-        HTTPException 500: Erreur serveur
-
-    Example:
-        POST /token
-        Content-Type: application/x-www-form-urlencoded
-
-        username=monusername&password=motdepasse123
-
-    Response:
-        {
-            "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-            "token_type": "bearer"
-        }
+    This provides OAuth2-compatible token generation while
+    maintaining clean architecture separation.
     """
-    # Étape 1 : Récupération de l'utilisateur
-    user = await use_cases.get_user_by_username(form_data.username)
-
-    # Étape 2 : Vérification des identifiants
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},  # Standard OAuth2
-        )
-
-    # Étape 3 : Vérification statut du compte
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user"
-        )
-
-    # Étape 4 : Mise à jour dernière connexion (audit + sécurité)
-    if user.id is not None:
-        await use_cases.update_last_login(user.id)
-
-    # Étape 5 : Configuration des scopes (permissions)
-    scopes = ["todos:read", "todos:write", "todos:delete"]
-    if user.is_superuser:
-        scopes.append("admin")  # Privilèges administrateur
-
-    # Étape 6 : Génération du token JWT
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={
-            "sub": user.username,  # Subject = identifiant utilisateur
-            "scopes": scopes,  # Permissions accordées
-        },
-        expires_delta=access_token_expires,
+    return await controller.generate_access_token(
+        form_data.username, form_data.password
     )
 
-    # Retour du token au format OAuth2 standard
-    return Token(access_token=access_token, token_type="bearer")
+
+@router.post(
+    "/refresh",
+    response_model=TokenResponseDTO,
+    status_code=status.HTTP_200_OK,
+    summary="Refresh access token (Simplified)",
+    description="Refresh an expired access token - Delegates to controller",
+)
+async def refresh_token(
+    refresh_token_data: dict = Body(..., description="Refresh token data"),
+    controller: AuthController = Depends(get_auth_controller),
+):
+    """
+    Simplified token refresh route.
+
+    The controller handles:
+    - Refresh token validation
+    - New token generation
+    - Security logging
+    - Error handling
+    """
+    refresh_token = refresh_token_data.get("refresh_token")
+
+    # Validate refresh_token
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Refresh token is required"
+        )
+
+    return await controller.refresh_access_token(refresh_token)
+
+
+@router.get(
+    "/me",
+    response_model=UserResponseDTO,
+    status_code=status.HTTP_200_OK,
+    summary="Get current user (Simplified)",
+    description="Get current authenticated user info - Delegates to controller",
+)
+async def get_current_user_info(
+    controller: AuthController = Depends(get_auth_controller),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """
+    Simplified current user info route.
+
+    This shows how even simple operations benefit from
+    controller delegation for consistency and logging.
+    """
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    return await controller.get_current_user_info(user_id)
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="User logout (Simplified)",
+    description="Logout user and invalidate token - Delegates to controller",
+)
+async def logout(
+    controller: AuthController = Depends(get_auth_controller),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """
+    Simplified logout route.
+
+    The controller handles:
+    - Token invalidation
+    - Security logging
+    - Cleanup operations
+    """
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    await controller.logout_user(user_id, current_user.token_id)
+
+
+@router.post(
+    "/change-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Change password (Simplified)",
+    description="Change user password - Delegates to controller",
+)
+async def change_password(
+    password_data: dict = Body(..., description="Password change data"),
+    controller: AuthController = Depends(get_auth_controller),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """
+    Simplified password change route.
+
+    The controller handles:
+    - Current password verification
+    - Password policy validation
+    - Secure password update
+    - Security logging
+    """
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    old_password = password_data.get("old_password")
+    new_password = password_data.get("new_password")
+
+    # Validate password data
+    if not old_password or not new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both old_password and new_password are required",
+        )
+
+    await controller.change_user_password(user_id, old_password, new_password)
+
+
+@router.delete(
+    "/account",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete account (Simplified)",
+    description="Delete user account and all data - Delegates to controller",
+)
+async def delete_account(
+    confirmation_data: dict = Body(..., description="Account deletion confirmation"),
+    controller: AuthController = Depends(get_auth_controller),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """
+    Simplified account deletion route.
+
+    The controller handles:
+    - Password confirmation
+    - Account deletion cascade
+    - Security logging
+    - Cleanup operations
+    """
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    password = confirmation_data.get("password")
+    confirm_deletion = confirmation_data.get("confirm_deletion", False)
+
+    # Validate confirmation data
+    if not password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password is required for account deletion",
+        )
+
+    if not confirm_deletion:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Account deletion must be explicitly confirmed",
+        )
+
+    await controller.delete_user_account(user_id)

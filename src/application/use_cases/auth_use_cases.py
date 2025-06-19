@@ -20,7 +20,13 @@ from src.application.dtos.auth_dto import (
 from src.infrastructure.auth.jwt_service import JWTService
 from src.infrastructure.auth.password_service import PasswordService
 from src.domain.repositories.user_repository import UserRepository
-from src.shared.exceptions.auth import InvalidCredentialsError, ExpiredTokenError
+from src.shared.exceptions.auth import (
+    InvalidCredentialsError,
+    ExpiredTokenError,
+    UserNotFoundError,
+    InvalidPasswordError,
+    InactiveUserError,
+)
 from src.shared.exceptions.domain import DuplicateUserError
 from src.shared.logging import get_logger
 
@@ -118,22 +124,39 @@ class AuthUseCases:
             LoginResponseDTO: Authentication result with tokens
 
         Raises:
-            InvalidCredentialsError: If credentials are invalid
+            UserNotFoundError: If user doesn't exist
+            InvalidPasswordError: If password is incorrect
+            InactiveUserError: If user account is inactive
         """
-        # Get user by email
-        user = await self.user_repository.get_user_by_email(login_data.username)
-        if not user:
-            raise InvalidCredentialsError(username=login_data.username)
+        # Get user by email OR username
+        user = None
+        identifier_type = "username/email"  # Since we accept both
 
-        # Verify password
+        # Try to find user by email first (if username contains @)
+        if "@" in login_data.username:
+            user = await self.user_repository.get_user_by_email(login_data.username)
+
+        # If not found by email, try by username
+        if not user:
+            user = await self.user_repository.get_user_by_username(login_data.username)
+
+        # User not found - use specific exception with clear message
+        if not user:
+            raise UserNotFoundError(
+                identifier=login_data.username, identifier_type=identifier_type
+            )
+
+        # Verify password - use specific exception for wrong password
         if not self.password_service.verify_password(
             login_data.password, user.hashed_password
         ):
-            raise InvalidCredentialsError(username=login_data.username)
+            raise InvalidPasswordError(identifier=login_data.username)
 
-        # Check if user is active
+        # Check if user is active - use specific exception for inactive users
         if not user.is_active:
-            raise InvalidCredentialsError(username=login_data.username)
+            raise InactiveUserError(
+                user_id=user.id or 0, reason="Account has been deactivated"
+            )
 
         # Update last login
         if user.id:
@@ -239,18 +262,19 @@ class AuthUseCases:
             bool: True if password was changed successfully
 
         Raises:
-            InvalidCredentialsError: If current password is wrong
+            UserNotFoundError: If user doesn't exist
+            InvalidPasswordError: If current password is wrong
         """
         # Get user by email
         user = await self.user_repository.get_user_by_email(user_email)
         if not user:
-            raise InvalidCredentialsError()
+            raise UserNotFoundError(identifier=user_email, identifier_type="email")
 
         # Verify current password
         if not self.password_service.verify_password(
             current_password, user.hashed_password
         ):
-            raise InvalidCredentialsError()
+            raise InvalidPasswordError(identifier=user_email)
 
         # Hash new password
         new_hashed_password = self.password_service.hash_password(new_password)

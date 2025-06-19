@@ -55,7 +55,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
             Response: HTTP response (normal or error)
         """
         start_time = time.time()
-        request_id = getattr(request.state, 'request_id', 'unknown')
+        request_id = getattr(request.state, "request_id", "unknown")
 
         try:
             # Process the request
@@ -64,18 +64,22 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
 
         except TodoAPIException as api_error:
             # Handle known API exceptions
-            return await self._handle_api_exception(request, api_error, start_time, request_id)
+            return await self._handle_api_exception(
+                request, api_error, start_time, request_id
+            )
 
         except Exception as error:
             # Handle unexpected exceptions
-            return await self._handle_unexpected_exception(request, error, start_time, request_id)
+            return await self._handle_unexpected_exception(
+                request, error, start_time, request_id
+            )
 
     async def _handle_api_exception(
         self,
         request: Request,
         error: TodoAPIException,
         start_time: float,
-        request_id: str
+        request_id: str,
     ) -> JSONResponse:
         """
         Handle known API exceptions.
@@ -108,42 +112,41 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
             self.logger.error(
                 f"API error: {error.detail}",
                 extra=error_context,
-                exc_info=True if self.debug else False
+                exc_info=True if self.debug else False,
             )
         elif error.status_code >= 400:
-            self.logger.warning(
-                f"Client error: {error.detail}",
-                extra=error_context
-            )
+            self.logger.warning(f"Client error: {error.detail}", extra=error_context)
         else:
-            self.logger.info(
-                f"API response: {error.detail}",
-                extra=error_context
-            )
+            self.logger.info(f"API response: {error.detail}", extra=error_context)
 
         # Log security events for authentication/authorization errors
         if error.status_code in [401, 403]:
             log_security_event(
-                event_type="authentication_error" if error.status_code == 401 else "authorization_error",
+                event_type=(
+                    "authentication_error"
+                    if error.status_code == 401
+                    else "authorization_error"
+                ),
                 ip_address=self._get_client_ip(request),
-                details=f"{error.error_code}: {error.detail}"
+                details=f"{error.error_code}: {error.detail}",
             )
 
-        # Create error response
+        # Create error response with consistent structure
         error_response = {
-            "error": {
-                "code": error.error_code,
-                "message": error.detail,
-                "status_code": error.status_code,
-                "request_id": request_id,
-                "timestamp": time.time()
-            }
+            "error_code": error.error_code,
+            "message": error.detail,
+            "status_code": error.status_code,
+            "timestamp": int(time.time()),
+            "request_id": request_id,
         }
 
-        # Include extra data in debug mode or for client errors
-        if self.debug or error.status_code < 500:
-            if error.extra_data:
-                error_response["error"]["details"] = error.extra_data
+        # Include extra data for client errors (4xx) or in debug mode
+        if error.extra_data and (error.status_code < 500 or self.debug):
+            # Flatten extra_data to top level for better readability
+            if isinstance(error.extra_data, dict):
+                error_response["extra_data"] = error.extra_data
+            else:
+                error_response["extra_data"] = {"details": error.extra_data}
 
         # Include debug information in development
         if self.debug:
@@ -154,22 +157,22 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                     "method": request.method,
                     "url": str(request.url),
                     "headers": dict(request.headers),
-                    "duration": f"{duration:.3f}s"
-                }
+                    "duration": f"{duration:.3f}s",
+                },
             }
+
+        # Add specific formatting for certain error types
+        if hasattr(error, "error_code"):
+            error_response = self._enhance_error_response(error_response, error)
 
         return JSONResponse(
             status_code=error.status_code,
             content=error_response,
-            headers=getattr(error, 'headers', None)
+            headers=getattr(error, "headers", None),
         )
 
     async def _handle_unexpected_exception(
-        self,
-        request: Request,
-        error: Exception,
-        start_time: float,
-        request_id: str
+        self, request: Request, error: Exception, start_time: float, request_id: str
     ) -> JSONResponse:
         """
         Handle unexpected/unhandled exceptions.
@@ -200,7 +203,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
             self.logger,
             "Unhandled exception in request processing",
             error,
-            **error_context
+            **error_context,
         )
 
         # Log as security event if suspicious
@@ -208,24 +211,26 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
             log_security_event(
                 event_type="suspicious_error",
                 ip_address=self._get_client_ip(request),
-                details=f"Unhandled {type(error).__name__}: {str(error)}"
+                details=f"Unhandled {type(error).__name__}: {str(error)}",
             )
 
         # Create internal server error
         internal_error = InternalServerError(
             detail="An internal server error occurred",
-            original_error=error if self.debug else None
+            original_error=error if self.debug else None,
         )
 
-        # Create error response (hide details in production)
+        # Create error response with consistent structure (hide details in production)
         error_response = {
-            "error": {
-                "code": internal_error.error_code,
-                "message": internal_error.detail,
-                "status_code": 500,
-                "request_id": request_id,
-                "timestamp": time.time()
-            }
+            "error_code": internal_error.error_code,
+            "message": (
+                internal_error.detail
+                if self.debug
+                else "An internal server error occurred. Please try again later."
+            ),
+            "status_code": 500,
+            "timestamp": int(time.time()),
+            "request_id": request_id,
         }
 
         # Include debug information only in debug mode
@@ -238,17 +243,11 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                     "method": request.method,
                     "url": str(request.url),
                     "headers": dict(request.headers),
-                    "duration": f"{duration:.3f}s"
-                }
+                    "duration": f"{duration:.3f}s",
+                },
             }
-        else:
-            # In production, just add a generic message
-            error_response["error"]["message"] = "An internal server error occurred. Please try again later."
 
-        return JSONResponse(
-            status_code=500,
-            content=error_response
-        )
+        return JSONResponse(status_code=500, content=error_response)
 
     def _get_client_ip(self, request: Request) -> str:
         """
@@ -289,22 +288,24 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
         """
         suspicious_indicators = [
             # SQL injection attempts
-            "sql" in str(error).lower() and any(keyword in str(error).lower()
-                                               for keyword in ["select", "union", "drop", "insert"]),
-
+            "sql" in str(error).lower()
+            and any(
+                keyword in str(error).lower()
+                for keyword in ["select", "union", "drop", "insert"]
+            ),
             # Path traversal attempts
             ".." in str(request.url) or "%" in str(request.url),
-
             # Script injection attempts
-            any(keyword in str(request.url).lower()
-                for keyword in ["<script", "javascript:", "data:"]),
-
+            any(
+                keyword in str(request.url).lower()
+                for keyword in ["<script", "javascript:", "data:"]
+            ),
             # Unusual exception types that might indicate attacks
-            isinstance(error, (PermissionError, FileNotFoundError)) and "etc" in str(error),
-
+            isinstance(error, (PermissionError, FileNotFoundError))
+            and "etc" in str(error),
             # Large request bodies (potential DoS)
-            request.headers.get("content-length") and
-            int(request.headers.get("content-length", 0)) > 10_000_000,  # 10MB
+            request.headers.get("content-length")
+            and int(request.headers.get("content-length", 0)) > 10_000_000,  # 10MB
         ]
 
         return any(suspicious_indicators)
@@ -322,7 +323,13 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
         if isinstance(data, dict):
             sanitized = {}
             for key, value in data.items():
-                if key.lower() in ["password", "token", "secret", "key", "authorization"]:
+                if key.lower() in [
+                    "password",
+                    "token",
+                    "secret",
+                    "key",
+                    "authorization",
+                ]:
                     sanitized[key] = "[REDACTED]"
                 else:
                     sanitized[key] = self._sanitize_for_logging(value)
@@ -331,3 +338,53 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
             return [self._sanitize_for_logging(item) for item in data]
         else:
             return data
+
+    def _enhance_error_response(
+        self, error_response: Dict[str, Any], error: TodoAPIException
+    ) -> Dict[str, Any]:
+        """
+        Enhance error response with specific formatting for certain error types.
+
+        Args:
+            error_response (Dict[str, Any]): Base error response
+            error (TodoAPIException): Exception that occurred
+
+        Returns:
+            Dict[str, Any]: Enhanced error response
+        """
+        # Special formatting for authentication errors
+        if error.error_code in ["USER_NOT_FOUND", "INVALID_PASSWORD", "USER_INACTIVE"]:
+            # Add user-friendly hints for authentication errors
+            if "extra_data" in error_response:
+                extra_data = error_response["extra_data"]
+
+                # Add helpful context for different auth errors
+                if error.error_code == "USER_NOT_FOUND":
+                    extra_data["hint"] = (
+                        "You can login with either your username or email address"
+                    )
+                    extra_data["suggestion"] = (
+                        "Double-check the spelling of your username/email"
+                    )
+
+                elif error.error_code == "INVALID_PASSWORD":
+                    extra_data["hint"] = "Password is case-sensitive"
+                    extra_data["suggestion"] = (
+                        "Check if Caps Lock is enabled or try retyping your password"
+                    )
+
+                elif error.error_code == "USER_INACTIVE":
+                    extra_data["hint"] = "Your account has been deactivated"
+                    extra_data["contact_support"] = True
+
+        # Format validation errors more clearly
+        elif error.error_code.startswith("VALIDATION_"):
+            if "extra_data" in error_response:
+                error_response["type"] = "validation_error"
+
+        # Format authorization errors
+        elif error.error_code.startswith("AUTHORIZATION_"):
+            if "extra_data" in error_response:
+                error_response["type"] = "authorization_error"
+
+        return error_response

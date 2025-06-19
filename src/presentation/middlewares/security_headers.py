@@ -39,7 +39,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         enable_csp: bool = True,
         csp_policy: Optional[str] = None,
         allowed_origins: Optional[list] = None,
-        debug: bool = False
+        debug: bool = False,
     ):
         """
         Initialize security headers middleware.
@@ -99,10 +99,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if self.debug:
             self.logger.debug(
                 f"Applied security headers to {request.method} {request.url.path}",
-                extra={
-                    "headers_added": list(headers.keys()),
-                    "path": request.url.path
-                }
+                extra={"headers_added": list(headers.keys()), "path": request.url.path},
             )
 
     def _get_security_headers(self, request: Request) -> Dict[str, str]:
@@ -145,8 +142,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 f"max-age={self.hsts_max_age}; includeSubDomains; preload"
             )
 
-        # Content Security Policy (CSP)
-        if self.enable_csp:
+        # Content Security Policy (CSP) - Skip for documentation endpoints
+        if self.enable_csp and not self._is_docs_endpoint(request):
             headers["Content-Security-Policy"] = self.csp_policy
 
         # CORS headers for API endpoints
@@ -218,14 +215,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             str: CSP policy string
         """
         if debug:
-            # More relaxed policy for development
+            # Relaxed policy for development with Swagger UI support
             return (
                 "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:*; "
-                "style-src 'self' 'unsafe-inline' http://localhost:*; "
-                "img-src 'self' data: http://localhost:*; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+                "https://cdn.jsdelivr.net https://unpkg.com https://cdn.redoc.ly "
+                "http://localhost:* ws://localhost:*; "
+                "style-src 'self' 'unsafe-inline' "
+                "https://cdn.jsdelivr.net https://unpkg.com https://fonts.googleapis.com "
+                "http://localhost:*; "
+                "img-src 'self' data: blob: "
+                "https://cdn.jsdelivr.net https://unpkg.com "
+                "http://localhost:*; "
                 "connect-src 'self' http://localhost:* ws://localhost:*; "
-                "font-src 'self' data:; "
+                "font-src 'self' data: "
+                "https://fonts.gstatic.com https://cdn.jsdelivr.net; "
                 "object-src 'none'; "
                 "base-uri 'self'; "
                 "frame-ancestors 'none';"
@@ -283,10 +287,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         """
         path = request.url.path
         return (
-            path.startswith("/api/") or
-            path.startswith("/todos") or
-            path.startswith("/auth") or
-            "application/json" in request.headers.get("accept", "")
+            path.startswith("/api/")
+            or path.startswith("/todos")
+            or path.startswith("/auth")
+            or "application/json" in request.headers.get("accept", "")
         )
 
     def _is_sensitive_endpoint(self, request: Request) -> bool:
@@ -308,7 +312,22 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "/token",
             "/refresh",
             "/admin",
-            "/user"
+            "/user",
         ]
 
         return any(pattern in path for pattern in sensitive_patterns)
+
+    def _is_docs_endpoint(self, request: Request) -> bool:
+        """
+        Check if endpoint is a documentation endpoint (Swagger/ReDoc).
+
+        Args:
+            request (Request): HTTP request
+
+        Returns:
+            bool: True if documentation endpoint
+        """
+        path = request.url.path.lower()
+        docs_patterns = ["/docs", "/redoc", "/openapi.json"]
+
+        return any(pattern in path for pattern in docs_patterns)

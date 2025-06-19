@@ -232,7 +232,7 @@ Consolider l'architecture en supprimant les duplications et optimiser le code po
 
 ---
 
-### TÂCHE 8 : Documentation et commit final
+### TÂCHE 8 : Documentation
 
 - **🎯 Objectif** : Documenter les changements et finaliser
 - **⚡ Priorité** : BASSE - Finalisation
@@ -254,11 +254,6 @@ Consolider l'architecture en supprimant les duplications et optimiser le code po
   - Changements apportés
   - Breaking changes
   - Migration guide
-
-  # 3. Commit final
-
-  git add -A
-  git commit -m "✨ Nettoyage architecture: consolidation hybride terminée"
   ```
 
 - **📊 Dépendances** : TÂCHE 7 terminée
@@ -266,7 +261,6 @@ Consolider l'architecture en supprimant les duplications et optimiser le code po
   - [x] `README.md` mis à jour
   - [x] `CHANGELOG.md` créé
   - [x] Documentation cohérente
-  - [x] Commit final effectué
   - [x] Architecture consolidée fonctionnelle
 
 ---

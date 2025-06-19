@@ -1,107 +1,92 @@
 """
-Routes Todo - Couche API (Clean Architecture)
+Simplified Todo Routes - Hybrid Architecture Implementation
 
-Ce module expose les endpoints REST pour la gestion des todos avec authentification JWT.
-Tous les endpoints nécessitent une authentification valide et des scopes spécifiques.
+This module demonstrates the simplified route approach where routes are thin
+and delegate all business logic, validation, and error handling to intelligent controllers.
 
-Endpoints disponibles :
-- GET /todos/all : Liste toutes les todos de l'utilisateur
-- GET /todos/{id} : Récupère une todo spécifique
-- POST /todos/create : Crée une nouvelle todo
-- PATCH /todos/{id} : Mise à jour partielle d'une todo
-- DELETE /todos/delete?id={id} : Supprime une todo
+Key principles:
+- Routes only handle HTTP routing and dependency injection
+- Controllers handle all business coordination
+- Middleware handles cross-cutting concerns
+- Clean separation of HTTP concerns from business logic
 
-Sécurité implémentée :
-- Authentification JWT obligatoire sur tous les endpoints
-- Scopes granulaires (read, write, delete)
-- Isolation stricte par propriétaire (owner_id)
-- Validation des données avec Pydantic
-- Codes d'erreur HTTP appropriés
-
-Principes Clean Architecture :
-- Dépend uniquement de la couche Application (Use Cases)
-- Convertit HTTP ↔ DTOs métier
-- Gère authentification et autorisation
-- Ne connaît pas les détails de persistance
+Architecture benefits:
+- Easier testing (test controllers independently)
+- Better error handling consistency
+- Cleaner code organization
+- Improved maintainability
 """
 
 from typing import List
 from fastapi import (
     APIRouter,
     Path,
-    HTTPException,
-    Security,
-    status,
     Body,
     Depends,
+    Security,
     Query,
+    status,
+    HTTPException,
 )
 
-# Imports Application (Use Cases et DTOs)
+# Application layer dependencies
 from src.application.use_cases.todo_use_cases import TodoUseCases
 from src.application.dtos.todo_dto import TodoCreateDTO, TodoUpdateDTO, TodoResponseDTO
 
-# Imports API (dépendances et sécurité)
+# Presentation layer - intelligent controllers
+from src.presentation.controllers.todo_controller import TodoController
+
+# API dependencies
 from src.api.dependencies import get_todo_use_cases, get_current_user
 from src.infrastructure.auth.jwt_service import TokenData
 
-# Router avec préfixe pour grouper tous les endpoints todos
+# Shared logging for route-level monitoring
+from src.shared.logging import get_logger
+
+# Router configuration
 router = APIRouter(prefix="/todos", tags=["todos"])
+logger = get_logger("routes.todo")
 
 
-# ===== ENDPOINTS DE CONSULTATION =====
+# ===== DEPENDENCY INJECTION =====
+
+
+async def get_todo_controller(
+    use_cases: TodoUseCases = Depends(get_todo_use_cases),
+) -> TodoController:
+    """
+    Dependency injection for TodoController.
+
+    This creates a controller instance with all necessary dependencies
+    injected, following the dependency inversion principle.
+    """
+    return TodoController(use_cases, logger)
+
+
+# ===== SIMPLIFIED ROUTES =====
 
 
 @router.get(
     "/all",
     response_model=List[TodoResponseDTO],
     status_code=status.HTTP_200_OK,
-    summary="Liste toutes mes todos",
-    description="Récupère toutes les todos appartenant à l'utilisateur connecté",
+    summary="Get all todos (Simplified)",
+    description="Retrieve all todos for the authenticated user - Delegates to controller",
 )
 async def get_all_todos(
-    use_cases: TodoUseCases = Depends(get_todo_use_cases),
+    controller: TodoController = Depends(get_todo_controller),
     current_user: TokenData = Security(get_current_user, scopes=["todos:read"]),
 ):
     """
-    Endpoint pour récupérer toutes les todos de l'utilisateur connecté.
+    Simplified route for retrieving all todos.
 
-    🛡️ SÉCURITÉ :
-    - Authentification JWT obligatoire
-    - Scope 'todos:read' requis
-    - Isolation par owner_id (utilisateur ne voit que ses todos)
+    This route demonstrates the hybrid architecture approach:
+    - Minimal HTTP handling (just routing and auth)
+    - Complete delegation to intelligent controller
+    - Controller handles validation, error handling, logging
+    - Middleware handles cross-cutting concerns
 
-    🔄 WORKFLOW :
-    1. Validation du token JWT et du scope
-    2. Extraction user_id depuis le token
-    3. Récupération des todos via Use Cases
-    4. Conversion entités → DTOs pour la réponse
-
-    Args:
-        use_cases (TodoUseCases): Use cases injectés pour la logique métier
-        current_user (TokenData): Données utilisateur extraites du JWT
-
-    Returns:
-        List[TodoResponseDTO]: Liste des todos de l'utilisateur (peut être vide)
-
-    Raises:
-        HTTPException 401: Token invalide ou expiré
-        HTTPException 403: Scope insuffisant
-
-    Example:
-        GET /todos/all
-        Authorization: Bearer eyJ0eXAiOiJKV1Q...
-
-        Response: [
-            {
-                "id": 1,
-                "title": "Ma première tâche",
-                "description": "Description de la tâche",
-                "priority": 2,
-                "completed": false,
-                "owner_id": 1
-            }
-        ]
+    The route is now purely focused on HTTP concerns.
     """
     # Validate user_id is not None for type safety
     if current_user.user_id is None:
@@ -110,53 +95,29 @@ async def get_all_todos(
         )
     user_id: int = current_user.user_id
 
-    return await use_cases.get_all_todos_by_owner(user_id)
+    return await controller.get_all_todos(user_id)
 
 
 @router.get(
     "/{todo_id}",
     response_model=TodoResponseDTO,
     status_code=status.HTTP_200_OK,
-    summary="Récupère une todo spécifique",
-    description="Récupère le détail d'une todo par son ID (seulement si elle appartient à l'utilisateur)",
+    summary="Get todo by ID (Simplified)",
+    description="Retrieve a specific todo by ID - Delegates to controller",
 )
 async def get_todo(
-    todo_id: int = Path(..., gt=0, description="ID de la todo à récupérer"),
-    use_cases: TodoUseCases = Depends(get_todo_use_cases),
+    todo_id: int = Path(..., gt=0, description="ID of the todo to retrieve"),
+    controller: TodoController = Depends(get_todo_controller),
     current_user: TokenData = Security(get_current_user, scopes=["todos:read"]),
 ):
     """
-    Endpoint pour récupérer une todo spécifique par son ID.
+    Simplified route for retrieving a specific todo.
 
-    🛡️ SÉCURITÉ :
-    - Authentification JWT obligatoire
-    - Scope 'todos:read' requis
-    - Vérification double : ID + owner_id
-    - Erreur 404 si todo inexistante OU appartenant à un autre utilisateur
-
-    🔄 WORKFLOW :
-    1. Validation du token JWT et du scope
-    2. Validation de l'ID (doit être > 0)
-    3. Récupération sécurisée via Use Cases (ID + owner_id)
-    4. Retour 404 si non trouvée ou pas propriétaire
-
-    Args:
-        todo_id (int): Identifiant de la todo (validé > 0)
-        use_cases (TodoUseCases): Use cases pour la logique métier
-        current_user (TokenData): Données utilisateur du JWT
-
-    Returns:
-        TodoResponseDTO: Données complètes de la todo
-
-    Raises:
-        HTTPException 401: Token invalide
-        HTTPException 403: Scope insuffisant
-        HTTPException 404: Todo inexistante ou pas propriétaire
-        HTTPException 422: ID invalide (≤ 0)
-
-    Example:
-        GET /todos/1
-        Authorization: Bearer eyJ0eXAiOiJKV1Q...
+    Notice how clean this becomes:
+    - No business logic in the route
+    - No manual error handling (controller handles it)
+    - No manual validation (controller handles it)
+    - No manual logging (controller handles it)
     """
     # Validate user_id is not None for type safety
     if current_user.user_id is None:
@@ -165,72 +126,30 @@ async def get_todo(
         )
     user_id: int = current_user.user_id
 
-    todo = await use_cases.get_todo_by_id_and_owner(todo_id, user_id)
-    if not todo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found or not yours"
-        )
-    return todo
-
-
-# ===== ENDPOINTS DE MODIFICATION =====
+    return await controller.get_todo_by_id(todo_id, user_id)
 
 
 @router.post(
     "/create",
     response_model=TodoResponseDTO,
     status_code=status.HTTP_201_CREATED,
-    summary="Crée une nouvelle todo",
-    description="Crée une nouvelle todo avec les données fournies",
+    summary="Create todo (Simplified)",
+    description="Create a new todo - Delegates to controller",
 )
 async def create_todo(
-    use_cases: TodoUseCases = Depends(get_todo_use_cases),
+    todo_data: TodoCreateDTO = Body(..., description="Todo creation data"),
+    controller: TodoController = Depends(get_todo_controller),
     current_user: TokenData = Security(get_current_user, scopes=["todos:write"]),
-    todo_create: TodoCreateDTO = Body(..., description="Données de la todo à créer"),
 ):
     """
-    Endpoint pour créer une nouvelle todo.
+    Simplified route for creating a todo.
 
-    🛡️ SÉCURITÉ :
-    - Authentification JWT obligatoire
-    - Scope 'todos:write' requis
-    - owner_id automatiquement assigné depuis le token
-
-    📝 VALIDATION :
-    - Titre : 3-50 caractères obligatoire
-    - Description : 3-100 caractères obligatoire
-    - Priorité : 1-5 (défaut: 1)
-    - Completed : défaut false
-
-    🔄 WORKFLOW :
-    1. Validation du token JWT et du scope
-    2. Validation des données avec TodoCreateDTO
-    3. Création via Use Cases avec owner_id automatique
-    4. Retour de la todo créée avec son ID généré
-
-    Args:
-        use_cases (TodoUseCases): Use cases pour la logique métier
-        current_user (TokenData): Données utilisateur du JWT
-        todo_create (TodoCreateDTO): Données validées de la todo
-
-    Returns:
-        TodoResponseDTO: Todo créée avec ID généré
-
-    Raises:
-        HTTPException 401: Token invalide
-        HTTPException 403: Scope insuffisant
-        HTTPException 422: Données invalides
-
-    Example:
-        POST /todos/create
-        Authorization: Bearer eyJ0eXAiOiJKV1Q...
-
-        {
-            "title": "Nouvelle tâche",
-            "description": "Description de la tâche",
-            "priority": 3,
-            "completed": false
-        }
+    The controller handles:
+    - Input validation
+    - Business rule enforcement
+    - Error handling and transformation
+    - Success/failure logging
+    - Performance monitoring
     """
     # Validate user_id is not None for type safety
     if current_user.user_id is None:
@@ -239,78 +158,27 @@ async def create_todo(
         )
     user_id: int = current_user.user_id
 
-    return await use_cases.create_todo(todo_create, user_id)
+    return await controller.create_todo(todo_data, user_id)
 
 
 @router.patch(
     "/{todo_id}",
     response_model=TodoResponseDTO,
     status_code=status.HTTP_200_OK,
-    summary="Mise à jour partielle d'une todo",
-    description="Met à jour seulement les champs fournis. Les autres restent inchangés.",
+    summary="Update todo (Simplified)",
+    description="Update an existing todo - Delegates to controller",
 )
 async def update_todo(
-    todo_id: int = Path(..., gt=0, description="ID de la todo à modifier"),
-    use_cases: TodoUseCases = Depends(get_todo_use_cases),
+    todo_id: int = Path(..., gt=0, description="ID of the todo to update"),
+    todo_update: TodoUpdateDTO = Body(..., description="Update data"),
+    controller: TodoController = Depends(get_todo_controller),
     current_user: TokenData = Security(get_current_user, scopes=["todos:write"]),
-    todo_update: TodoUpdateDTO = Body(
-        ..., description="Champs à mettre à jour (tous optionnels)"
-    ),
 ):
     """
-    Endpoint pour la mise à jour partielle d'une todo (PATCH).
+    Simplified route for updating a todo.
 
-    🎯 FONCTIONNALITÉ CLÉ : MISE À JOUR PARTIELLE
-    - Seuls les champs fournis sont mis à jour
-    - Les champs non fournis restent inchangés
-    - Idéal pour les interfaces utilisateur granulaires
-
-    🛡️ SÉCURITÉ :
-    - Authentification JWT obligatoire
-    - Scope 'todos:write' requis
-    - Vérification propriété (ID + owner_id)
-    - Erreur 404 si inexistante ou pas propriétaire
-
-    📝 CHAMPS OPTIONNELS :
-    - title : 3-50 caractères si fourni
-    - description : 3-100 caractères si fourni
-    - priority : 1-5 si fourni
-    - completed : boolean si fourni
-
-    🔄 WORKFLOW :
-    1. Validation du token JWT et du scope
-    2. Validation de l'ID (> 0)
-    3. Validation des champs fournis avec TodoUpdateDTO
-    4. Mise à jour partielle via Use Cases
-    5. Retour de la todo mise à jour
-
-    Args:
-        todo_id (int): Identifiant de la todo (> 0)
-        use_cases (TodoUseCases): Use cases pour la logique métier
-        current_user (TokenData): Données utilisateur du JWT
-        todo_update (TodoUpdateDTO): Champs à mettre à jour (optionnels)
-
-    Returns:
-        TodoResponseDTO: Todo mise à jour avec nouveaux champs
-
-    Raises:
-        HTTPException 401: Token invalide
-        HTTPException 403: Scope insuffisant
-        HTTPException 404: Todo inexistante ou pas propriétaire
-        HTTPException 422: Données invalides
-
-    Examples:
-        # Changer seulement le titre
-        PATCH /todos/1
-        {"title": "Nouveau titre"}
-
-        # Marquer comme terminée
-        PATCH /todos/1
-        {"completed": true}
-
-        # Changer titre et priorité
-        PATCH /todos/1
-        {"title": "Urgent!", "priority": 5}
+    This demonstrates how simple routes become when using intelligent controllers.
+    All the complexity is moved to the appropriate layer.
     """
     # Validate user_id is not None for type safety
     if current_user.user_id is None:
@@ -319,69 +187,28 @@ async def update_todo(
         )
     user_id: int = current_user.user_id
 
-    todo = await use_cases.update_todo(todo_id, todo_update, user_id)
-    if not todo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found or not yours"
-        )
-    return todo
-
-
-# ===== ENDPOINTS DE SUPPRESSION =====
+    return await controller.update_todo(todo_id, todo_update, user_id)
 
 
 @router.delete(
     "/delete",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Supprime une todo",
-    description="Supprime définitivement une todo (action irréversible)",
+    summary="Delete todo (Simplified)",
+    description="Delete a todo - Delegates to controller",
 )
 async def delete_todo(
-    id: int = Query(..., gt=0, description="ID de la todo à supprimer"),
-    use_cases: TodoUseCases = Depends(get_todo_use_cases),
+    todo_id: int = Query(..., gt=0, alias="id", description="ID of the todo to delete"),
+    controller: TodoController = Depends(get_todo_controller),
     current_user: TokenData = Security(get_current_user, scopes=["todos:delete"]),
 ):
     """
-    Endpoint pour supprimer définitivement une todo.
+    Simplified route for deleting a todo.
 
-    ⚠️ SUPPRESSION DÉFINITIVE : Cette action est irréversible !
-
-    🛡️ SÉCURITÉ :
-    - Authentification JWT obligatoire
-    - Scope 'todos:delete' requis (différent de write)
-    - Vérification propriété avant suppression
-    - Erreur 404 si inexistante ou pas propriétaire
-
-    🔄 WORKFLOW :
-    1. Validation du token JWT et du scope spécial 'delete'
-    2. Validation de l'ID (> 0)
-    3. Vérification propriété via Use Cases
-    4. Suppression définitive si validée
-    5. Retour 204 No Content (succès sans données)
-
-    Args:
-        id (int): Identifiant de la todo à supprimer (> 0)
-        use_cases (TodoUseCases): Use cases pour la logique métier
-        current_user (TokenData): Données utilisateur du JWT
-
-    Returns:
-        None: Statut 204 No Content (pas de body de réponse)
-
-    Raises:
-        HTTPException 401: Token invalide
-        HTTPException 403: Scope insuffisant (besoin todos:delete)
-        HTTPException 404: Todo inexistante ou pas propriétaire
-        HTTPException 422: ID invalide (≤ 0)
-
-    Example:
-        DELETE /todos/delete?id=1
-        Authorization: Bearer eyJ0eXAiOiJKV1Q...
-
-        Response: 204 No Content (pas de body)
-
-    Note:
-        Le scope 'todos:delete' est distinct de 'todos:write' pour
-        permettre un contrôle granulaire des permissions.
+    Notice the clean separation:
+    - Route handles HTTP routing only
+    - Controller handles business logic and validation
+    - Middleware handles security and logging
+    - Use cases handle domain logic
     """
     # Validate user_id is not None for type safety
     if current_user.user_id is None:
@@ -390,8 +217,136 @@ async def delete_todo(
         )
     user_id: int = current_user.user_id
 
-    deleted = await use_cases.delete_todo(id, user_id)
-    if not deleted:
+    await controller.delete_todo(todo_id, user_id)
+    # No return needed for 204 status
+
+
+# ===== ADDITIONAL SIMPLIFIED ROUTES =====
+
+
+@router.patch(
+    "/{todo_id}/complete",
+    response_model=TodoResponseDTO,
+    status_code=status.HTTP_200_OK,
+    summary="Mark todo as complete (Simplified)",
+    description="Mark a todo as completed - Delegates to controller",
+)
+async def complete_todo(
+    todo_id: int = Path(..., gt=0, description="ID of the todo to complete"),
+    controller: TodoController = Depends(get_todo_controller),
+    current_user: TokenData = Security(get_current_user, scopes=["todos:write"]),
+):
+    """
+    Simplified route for completing a todo.
+
+    This shows how additional business operations become simple routes
+    when using intelligent controllers.
+    """
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found or not yours"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
         )
+    user_id: int = current_user.user_id
+
+    return await controller.complete_todo(todo_id, user_id)
+
+
+@router.patch(
+    "/{todo_id}/uncomplete",
+    response_model=TodoResponseDTO,
+    status_code=status.HTTP_200_OK,
+    summary="Mark todo as incomplete (Simplified)",
+    description="Mark a todo as incomplete - Delegates to controller",
+)
+async def uncomplete_todo(
+    todo_id: int = Path(..., gt=0, description="ID of the todo to uncomplete"),
+    controller: TodoController = Depends(get_todo_controller),
+    current_user: TokenData = Security(get_current_user, scopes=["todos:write"]),
+):
+    """
+    Simplified route for un-completing a todo.
+    """
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    return await controller.uncomplete_todo(todo_id, user_id)
+
+
+@router.get(
+    "/priority/{priority}",
+    response_model=List[TodoResponseDTO],
+    status_code=status.HTTP_200_OK,
+    summary="Get todos by priority (Simplified)",
+    description="Retrieve todos by priority level - Delegates to controller",
+)
+async def get_todos_by_priority(
+    priority: int = Path(..., ge=1, le=5, description="Priority level (1-5)"),
+    controller: TodoController = Depends(get_todo_controller),
+    current_user: TokenData = Security(get_current_user, scopes=["todos:read"]),
+):
+    """
+    Simplified route for getting todos by priority.
+
+    Even complex filtering becomes simple with intelligent controllers.
+    """
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    return await controller.get_todos_by_priority(user_id, priority)
+
+
+@router.get(
+    "/completed",
+    response_model=List[TodoResponseDTO],
+    status_code=status.HTTP_200_OK,
+    summary="Get completed todos (Simplified)",
+    description="Retrieve all completed todos - Delegates to controller",
+)
+async def get_completed_todos(
+    controller: TodoController = Depends(get_todo_controller),
+    current_user: TokenData = Security(get_current_user, scopes=["todos:read"]),
+):
+    """
+    Simplified route for getting completed todos.
+    """
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    return await controller.get_completed_todos(user_id)
+
+
+@router.get(
+    "/pending",
+    response_model=List[TodoResponseDTO],
+    status_code=status.HTTP_200_OK,
+    summary="Get pending todos (Simplified)",
+    description="Retrieve all pending (incomplete) todos - Delegates to controller",
+)
+async def get_pending_todos(
+    controller: TodoController = Depends(get_todo_controller),
+    current_user: TokenData = Security(get_current_user, scopes=["todos:read"]),
+):
+    """
+    Simplified route for getting pending todos.
+    """
+    # Validate user_id is not None for type safety
+    if current_user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user session"
+        )
+    user_id: int = current_user.user_id
+
+    return await controller.get_pending_todos(user_id)

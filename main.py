@@ -1,94 +1,292 @@
 """
-Point d'entrée principal de l'application Todo API.
-Ce fichier configure FastAPI avec tous les middlewares de sécurité,
-inclut les routes API, et initialise la base de données.
+Hybrid Architecture FastAPI Application - Production Ready
 
-Architecture utilisée : Clean Architecture
-- Domain Layer : Entités et interfaces (src/domain/)
-- Application Layer : Use cases et DTOs (src/application/)
-- Infrastructure Layer : Implémentations concrètes (src/infrastructure/)
-- API Layer : Routes et endpoints REST (src/api/)
+This is the consolidated main application file combining the best of both
+Clean Architecture and MVC patterns. All duplications have been removed
+and the application uses the unified hybrid architecture.
+
+Architecture Stack:
+1. Domain Layer: Business entities and rules
+2. Application Layer: Use cases and business logic coordination
+3. Infrastructure Layer: External concerns (database, auth, etc.)
+4. Presentation Layer: Controllers and middleware
+5. API Layer: Simplified routes that delegate to controllers
+
+Key Features:
+- Intelligent controllers with comprehensive error handling
+- Advanced middleware stack for production-ready features
+- Simplified routes with clean separation of concerns
+- Comprehensive logging and monitoring
+- Robust exception handling system
+- Security-first design with multiple protection layers
+- Single point of entry (no duplications)
 """
 
-# Imports FastAPI et middlewares de sécurité
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware  # Gestion CORS pour les appels cross-origin
-from fastapi.middleware.trustedhost import TrustedHostMiddleware  # Protection contre les attaques Host header
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
-# Imports des routes API (couche présentation)
-from src.api.routes import todo, auth
-
-# Imports infrastructure (configuration et base de données)
+# Infrastructure configuration
 from src.infrastructure.config import get_settings
 from src.infrastructure.database.sqlite.models import Base
 from src.infrastructure.database.sqlite.config import engine
-from src.infrastructure.security.timeout_middleware import TimeoutMiddleware
 
-# ===== CONFIGURATION DE L'APPLICATION =====
+# Shared infrastructure
+from src.shared.logging import setup_logging, get_logger, LoggingConfig
 
-# Charger les configurations depuis les variables d'environnement
-# Le pattern Singleton (@lru_cache) garantit une seule instance des settings
+# Advanced middleware stack
+from src.presentation.middlewares.error_handler import ErrorHandlerMiddleware
+from src.presentation.middlewares.logging_middleware import LoggingMiddleware
+from src.presentation.middlewares.rate_limiting import RateLimitingMiddleware
+from src.presentation.middlewares.security_headers import SecurityHeadersMiddleware
+
+# Consolidated hybrid routes (no more duplications!)
+from src.api.routes import todo, auth
+
+# ===== APPLICATION CONFIGURATION =====
+
+# Load settings
 settings = get_settings()
 
-# Créer l'instance FastAPI avec métadonnées depuis la configuration
+# Setup structured logging
+logging_config = LoggingConfig.from_environment()
+setup_logging(logging_config)
+
+logger = get_logger("main")
+
+
+# ===== LIFESPAN EVENT HANDLER =====
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Modern lifespan event handler for startup and shutdown tasks.
+
+    Replaces deprecated @app.on_event("startup") and @app.on_event("shutdown")
+    """
+    # STARTUP
+    logger.info("Starting Todo API (Consolidated Hybrid Architecture)...")
+
+    try:
+        # Initialize database
+        logger.info("Initializing database...")
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database initialized successfully")
+
+        # Log configuration summary
+        logger.info(
+            "Application started successfully",
+            extra={
+                "app_name": settings.APP_NAME,
+                "version": f"{settings.APP_VERSION}-consolidated",
+                "debug_mode": settings.DEBUG,
+                "environment": getattr(settings, "ENVIRONMENT", "development"),
+                "architecture": "hybrid_consolidated",
+                "features": [
+                    "intelligent_controllers",
+                    "advanced_middleware",
+                    "structured_logging",
+                    "rate_limiting",
+                    "security_headers",
+                    "error_handling",
+                    "no_duplications",
+                ],
+            },
+        )
+
+        yield  # Application is running
+
+    except Exception as e:
+        logger.error(
+            "Failed to start application",
+            extra={"error": str(e), "error_type": type(e).__name__},
+        )
+        raise
+
+    finally:
+        # SHUTDOWN
+        logger.info("Shutting down Todo API...")
+
+        try:
+            # Perform cleanup tasks here
+            # (close database connections, cleanup resources, etc.)
+            logger.info("Application shutdown completed successfully")
+
+        except Exception as e:
+            logger.error(
+                "Error during application shutdown",
+                extra={"error": str(e), "error_type": type(e).__name__},
+            )
+
+
+# Create FastAPI application with hybrid architecture
 app = FastAPI(
-    title=settings.APP_NAME,        # Nom affiché dans la doc Swagger
-    version=settings.APP_VERSION,   # Version API
-    debug=settings.DEBUG            # Mode debug (reload auto, logs détaillés)
+    title=f"{settings.APP_NAME} - Production Ready",
+    version=f"{settings.APP_VERSION}-consolidated",
+    description="""
+    ## Todo API - Hybrid Architecture (Consolidated)
+
+    This API demonstrates a clean, consolidated hybrid architecture:
+
+    ### Architecture Layers
+    - **Domain**: Business entities and rules
+    - **Application**: Use cases and business coordination
+    - **Infrastructure**: External concerns (DB, auth, etc.)
+    - **Presentation**: Controllers and middleware
+    - **API**: Simplified routes (no duplications)
+
+    ### Key Features
+    - 🎯 Intelligent controllers with comprehensive validation
+    - 🛡️ Advanced security middleware stack
+    - 📊 Performance monitoring and structured logging
+    - 🚀 Production-ready error handling
+    - ⚡ Rate limiting with adaptive algorithms
+    - 🔒 Multiple layers of security protection
+    - 🧹 No code duplications (clean architecture)
+
+    ### Available Endpoints
+    - **Auth**: `/auth/` - Authentication & user management
+    - **Todos**: `/todos/` - Complete todo CRUD operations
+    - **System**: `/health`, `/` - Health checks and info
+
+    All routes use intelligent controllers for clean separation of concerns.
+    """,
+    debug=settings.DEBUG,
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    lifespan=lifespan,  # Modern lifespan handler
 )
 
-# ===== CONFIGURATION DES MIDDLEWARES DE SÉCURITÉ =====
-# Les middlewares sont appliqués dans l'ordre inverse d'ajout (LIFO)
+# ===== ADVANCED MIDDLEWARE STACK =====
+# Middlewares are applied in reverse order (LIFO)
 
-# 1. CORS Middleware - Gestion des requêtes cross-origin
-# Permet aux applications frontend (React, Vue, etc.) d'appeler l'API
+logger.info("Configuring production-ready middleware stack...")
+
+# 1. Security Headers (outermost layer) - Configured for docs compatibility
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    debug=settings.DEBUG,  # Relaxed CSP for Swagger UI in debug mode
+    enable_csp=True,
+    allowed_origins=settings.CORS_ORIGINS,
+)
+
+# 2. Rate Limiting with adaptive algorithms
+app.add_middleware(
+    RateLimitingMiddleware,
+    default_requests_per_minute=100,
+    default_burst_size=10,
+    enable_adaptive_limiting=True,
+)
+
+# 3. Request/Response Logging with structured data
+app.add_middleware(LoggingMiddleware)
+
+# 4. Global Error Handler with intelligent error mapping
+app.add_middleware(ErrorHandlerMiddleware)
+
+# 5. CORS (cross-origin requests)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,    # Domaines autorisés à faire des requêtes
-    allow_credentials=True,                  # Autorise l'envoi de cookies/tokens
-    allow_methods=["*"],                     # Toutes les méthodes HTTP autorisées
-    allow_headers=["*"],                     # Tous les headers autorisés
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["X-Request-ID", "X-RateLimit-Remaining"],
 )
 
-# 2. TrustedHost Middleware - Protection contre les attaques Host header injection
-# Vérifie que le header "Host" correspond aux domaines autorisés
-app.add_middleware(
-    TrustedHostMiddleware,
-    allowed_hosts=settings.ALLOWED_HOSTS,   # Liste des hôtes de confiance
-)
+# 6. Trusted Host protection
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
 
-# 3. Timeout Middleware - Protection contre les requêtes qui traînent
-# Annule automatiquement les requêtes qui dépassent 10 secondes
-app.add_middleware(TimeoutMiddleware, timeout=10)
+logger.info("Middleware stack configured successfully")
 
-# ===== ENREGISTREMENT DES ROUTES API =====
+# ===== ROUTE REGISTRATION =====
 
-# Routes d'authentification : /register, /token
-# Gère l'inscription, la connexion et la génération de tokens JWT
+logger.info("Registering consolidated API routes...")
+
+# Consolidated Hybrid Architecture Routes (tags defined in routers)
 app.include_router(auth.router)
-
-# Routes de gestion des todos : /todos/*
-# CRUD complet avec authentification et autorisation par scopes
 app.include_router(todo.router)
 
-# ===== INITIALISATION DE LA BASE DE DONNÉES =====
+logger.info("API routes registered successfully")
 
-# Création automatique des tables SQLite au démarrage de l'application
-# Base.metadata contient toutes les définitions de tables (User, Todo)
-# Cette ligne exécute les CREATE TABLE si les tables n'existent pas
-Base.metadata.create_all(bind=engine)
+# ===== APPLICATION EVENTS (Modern Lifespan Handler) =====
+#
+# Note: The lifespan event handler is now defined above and passed
+# to the FastAPI constructor. This replaces the deprecated @app.on_event()
+# decorators with the modern contextmanager approach.
 
-# ===== POINT D'ENTRÉE POUR LE DÉVELOPPEMENT =====
 
-# Ce bloc s'exécute uniquement si le script est lancé directement (python main.py)
-# En production, on utilise plutôt : uvicorn main:app --host 0.0.0.0 --port 8000
+# ===== SYSTEM ENDPOINTS =====
+
+
+@app.get("/health", tags=["system"])
+async def health_check():
+    """
+    Production-ready health check endpoint.
+
+    Returns application status and system metrics.
+    """
+    return {
+        "status": "healthy",
+        "app_name": settings.APP_NAME,
+        "version": f"{settings.APP_VERSION}-consolidated",
+        "architecture": "hybrid_consolidated",
+        "features": {
+            "intelligent_controllers": True,
+            "advanced_middleware": True,
+            "structured_logging": True,
+            "rate_limiting": True,
+            "security_headers": True,
+            "error_handling": True,
+            "no_duplications": True,
+        },
+    }
+
+
+@app.get("/", tags=["system"])
+async def root():
+    """
+    Root endpoint with API information.
+    """
+    return {
+        "message": "Welcome to the Todo API - Hybrid Architecture",
+        "description": "A clean, consolidated FastAPI implementation with no duplications",
+        "documentation": (
+            "/docs" if settings.DEBUG else "Documentation disabled in production"
+        ),
+        "health_check": "/health",
+        "endpoints": {
+            "auth": "/auth/",
+            "todos": "/todos/",
+        },
+        "architecture_benefits": [
+            "Clean separation of concerns",
+            "Intelligent error handling",
+            "Comprehensive logging",
+            "Advanced security features",
+            "Production-ready middleware",
+            "Simplified route maintenance",
+            "No code duplications",
+            "Single point of entry",
+        ],
+    }
+
+
+# ===== DEVELOPMENT SERVER =====
+
 if __name__ == "__main__":
     import uvicorn
 
-    # Démarrage du serveur ASGI avec uvicorn
+    logger.info("Starting development server...")
+
     uvicorn.run(
-        "main:app",              # Chemin vers l'application FastAPI
-        host=settings.HOST,      # Adresse d'écoute (127.0.0.1 = localhost)
-        port=settings.PORT,      # Port d'écoute (défaut: 8000)
-        reload=settings.DEBUG    # Auto-reload en mode debug (pratique pour le dev)
+        "main:app",
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=settings.DEBUG,
+        log_level="info" if not settings.DEBUG else "debug",
+        access_log=True,
     )

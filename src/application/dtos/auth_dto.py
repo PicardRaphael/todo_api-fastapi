@@ -15,12 +15,12 @@ from src.domain.entities.user import User
 class LoginRequestDTO(BaseModel):
     """DTO for user login requests."""
 
-    username: EmailStr = Field(..., description="User email address")
+    username: str = Field(..., min_length=3, description="Username or email address")
     password: str = Field(..., min_length=1, description="User password")
 
     model_config = ConfigDict(
         json_schema_extra={
-            "example": {"username": "user@example.com", "password": "securepassword123"}
+            "example": {"username": "johndoe", "password": "securepassword123"}
         }
     )
 

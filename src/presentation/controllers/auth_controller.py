@@ -31,6 +31,13 @@ from src.application.dtos.auth_dto import (
 # Shared logging
 from src.shared.logging import get_logger
 
+# Exceptions d'authentification
+from src.shared.exceptions.auth.authentication import (
+    UserNotFoundError,
+    InvalidPasswordError,
+    InactiveUserError,
+)
+
 
 class AuthController:
     """
@@ -121,13 +128,27 @@ class AuthController:
 
             return result
 
-        except Exception as e:
+        except (UserNotFoundError, InvalidPasswordError, InactiveUserError) as e:
+            # Laisser remonter les exceptions d'authentification spécifiques
+            # Elles seront gérées par le middleware error_handler
             self.logger.error(
                 "User authentication failed",
+                extra={
+                    "error": str(e),
+                    "username": username,
+                    "error_code": e.error_code,
+                },
+            )
+            raise
+        except Exception as e:
+            # Autres erreurs inattendues
+            self.logger.error(
+                "Unexpected authentication error",
                 extra={"error": str(e), "username": username},
             )
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Authentication service unavailable",
             )
 
     async def generate_access_token(
