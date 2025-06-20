@@ -41,7 +41,7 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
         default_burst_size: int = 10,
         endpoint_limits: Optional[Dict[str, Tuple[int, int]]] = None,
         whitelist_ips: Optional[list] = None,
-        enable_adaptive_limiting: bool = True
+        enable_adaptive_limiting: bool = True,
     ):
         """
         Initialize rate limiting middleware.
@@ -105,25 +105,32 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
         )
 
         if not is_allowed:
-            # Log security event
+            # Determine limit type based on retry_after duration
+            limit_type = "burst" if retry_after <= 10 else "minute"
+            limit_description = (
+                f"{burst_limit}/10s" if limit_type == "burst" else f"{rpm_limit}/minute"
+            )
+
+            # Log security event with more details
             log_security_event(
                 event_type="rate_limit_exceeded",
                 ip_address=client_ip,
-                details=f"Rate limit exceeded for {request.method} {request.url.path}"
+                details=f"Rate limit exceeded ({limit_type}) for {request.method} {request.url.path} - {limit_description}",
             )
 
-            # Return rate limit error
+            # Return enhanced rate limit error
             error = RateLimitExceededError(
-                limit=f"{rpm_limit}/minute",
+                limit=limit_description,
                 retry_after=retry_after,
                 endpoint=request.url.path,
-                user_identifier=client_ip
+                user_identifier=rate_key,  # Use rate_key instead of just IP
+                limit_type=limit_type,
             )
 
             return JSONResponse(
                 status_code=error.status_code,
                 content=error.to_dict(),
-                headers=error.headers
+                headers=error.headers,
             )
 
         # Record request
@@ -139,6 +146,13 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
             if self.enable_adaptive:
                 duration = time.time() - start_time
                 self._record_response_metrics(rate_key, response.status_code, duration)
+
+            # Add rate limit headers to successful responses
+            rate_limit_headers = self.get_rate_limit_headers(
+                rate_key, rpm_limit, burst_limit
+            )
+            for header_name, header_value in rate_limit_headers.items():
+                response.headers[header_name] = header_value
 
             return response
 
@@ -161,8 +175,8 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
         client_ip = self._get_client_ip(request)
 
         # Use user ID if authenticated, otherwise fall back to IP
-        if hasattr(request.state, 'user') and request.state.user:
-            user_id = getattr(request.state.user, 'id', None)
+        if hasattr(request.state, "user") and request.state.user:
+            user_id = getattr(request.state.user, "id", None)
             if user_id:
                 return f"user:{user_id}"
 
@@ -190,10 +204,7 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
         return self.default_rpm, self.default_burst
 
     def _check_rate_limits(
-        self,
-        rate_key: str,
-        rpm_limit: int,
-        burst_limit: int
+        self, rate_key: str, rpm_limit: int, burst_limit: int
     ) -> Tuple[bool, int]:
         """
         Check if request is within rate limits.
@@ -248,10 +259,7 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
                     self.request_counts[rate_key].popleft()
 
     def _apply_adaptive_adjustments(
-        self,
-        rate_key: str,
-        base_rpm: int,
-        base_burst: int
+        self, rate_key: str, base_rpm: int, base_burst: int
     ) -> Tuple[int, int]:
         """
         Apply adaptive rate limiting adjustments based on behavior patterns.
@@ -288,8 +296,8 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
                     "rate_key": rate_key,
                     "recent_errors": recent_errors,
                     "rpm_reduction": "50%",
-                    "burst_reduction": "70%"
-                }
+                    "burst_reduction": "70%",
+                },
             )
         elif avg_response_time > 2.0:  # Slow responses (>2 seconds)
             rpm_multiplier = 0.7  # Reduce to 70%
@@ -300,8 +308,8 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
                     "rate_key": rate_key,
                     "avg_response_time": f"{avg_response_time:.2f}s",
                     "rpm_reduction": "30%",
-                    "burst_reduction": "50%"
-                }
+                    "burst_reduction": "50%",
+                },
             )
         else:
             # No penalties
@@ -314,10 +322,7 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
         return adjusted_rpm, adjusted_burst
 
     def _record_response_metrics(
-        self,
-        rate_key: str,
-        status_code: int,
-        duration: float
+        self, rate_key: str, status_code: int, duration: float
     ) -> None:
         """
         Record response metrics for adaptive limiting.
@@ -391,18 +396,47 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
         """
         return {
             # Authentication endpoints - stricter limits
-            "/auth/login": (10, 3),           # 10/min, burst 3
-            "/auth/register": (5, 2),         # 5/min, burst 2
-            "/auth/refresh": (20, 5),         # 20/min, burst 5
-
+            "/auth/login": (10, 3),  # 10/min, burst 3
+            "/auth/register": (5, 2),  # 5/min, burst 2
+            "/auth/refresh": (20, 5),  # 20/min, burst 5
             # Todo CRUD - moderate limits
-            "POST:/todos": (30, 10),          # 30/min, burst 10
-            "PUT:/todos": (20, 8),            # 20/min, burst 8
-            "DELETE:/todos": (15, 5),         # 15/min, burst 5
-
+            "POST:/todos": (30, 10),  # 30/min, burst 10
+            "PUT:/todos": (20, 8),  # 20/min, burst 8
+            "DELETE:/todos": (15, 5),  # 15/min, burst 5
             # Read operations - higher limits
-            "GET:/todos": (120, 30),          # 120/min, burst 30
-
+            "GET:/todos": (120, 30),  # 120/min, burst 30
             # Health checks - very high limits
-            "/health": (1000, 100),           # 1000/min, burst 100
+            "/health": (1000, 100),  # 1000/min, burst 100
+        }
+
+    def get_rate_limit_headers(
+        self, rate_key: str, rpm_limit: int, burst_limit: int
+    ) -> Dict[str, str]:
+        """
+        Get current rate limit headers for successful responses.
+
+        Args:
+            rate_key (str): Rate limiting key
+            rpm_limit (int): Requests per minute limit
+            burst_limit (int): Burst limit
+
+        Returns:
+            Dict[str, str]: Headers to add to response
+        """
+        current_time = time.time()
+        window_start = current_time - 60
+
+        # Calculate remaining requests
+        request_times = self.request_counts[rate_key]
+        recent_requests = sum(1 for t in request_times if t >= window_start)
+        remaining = max(0, rpm_limit - recent_requests)
+
+        # Calculate reset time (next minute boundary)
+        reset_time = int(current_time + (60 - (current_time % 60)))
+
+        return {
+            "X-RateLimit-Limit": str(rpm_limit),
+            "X-RateLimit-Remaining": str(remaining),
+            "X-RateLimit-Reset": str(reset_time),
+            "X-RateLimit-Burst": str(burst_limit),
         }

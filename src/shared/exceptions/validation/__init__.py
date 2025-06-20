@@ -11,14 +11,14 @@ This module contains all exceptions related to:
 # Base validation classes
 from .base import (
     ValidationError,
-    MultipleValidationErrors,
+    # MultipleValidationErrors removed - Pydantic handles multiple errors
 )
 
 # Format validation
 from .format import (
     InvalidEmailError,
     InvalidUsernameError,
-    InvalidDateFormatError,
+    # InvalidDateFormatError removed - no date fields
 )
 
 # Password validation
@@ -33,27 +33,21 @@ from .length import (
 )
 
 # Field validation
-from .fields import (
-    RequiredFieldMissingError,
-    InvalidChoiceError,
-    InvalidRangeError,
-)
+# Field validation exceptions removed - Pydantic handles these cases
 
 __all__ = [
     # Base
     "ValidationError",
-    "MultipleValidationErrors",
+    # MultipleValidationErrors removed
     # Format
     "InvalidEmailError",
     "InvalidUsernameError",
-    "InvalidDateFormatError",
+    # InvalidDateFormatError removed
     # Password
     "WeakPasswordError",
     # Length
     "ValueTooLongError",
     "ValueTooShortError",
     # Fields
-    "RequiredFieldMissingError",
-    "InvalidChoiceError",
-    "InvalidRangeError",
+    # Field validation exceptions removed
 ]

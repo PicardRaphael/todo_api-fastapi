@@ -5,26 +5,61 @@ This module contains exceptions related to format validation
 for email addresses, dates, usernames, and other formatted data.
 """
 
+import re
 from .base import ValidationError
 
 
 class InvalidEmailError(ValidationError):
     """Exception raised when email format is invalid."""
 
-    def __init__(self, email: str):
+    def __init__(self, email: str, reason: str = "Invalid email format"):
         """
         Initialize invalid email error.
 
         Args:
             email (str): Invalid email address
+            reason (str): Specific reason why email is invalid
         """
         super().__init__(
             field="email",
             value=email,
-            reason="Invalid email format",
+            reason=reason,
             valid_format="user@example.com",
         )
         self.error_code = "INVALID_EMAIL"
+
+    @staticmethod
+    def validate_email(email: str) -> None:
+        """
+        Validate email format and raise InvalidEmailError if invalid.
+
+        Args:
+            email (str): Email to validate
+
+        Raises:
+            InvalidEmailError: If email format is invalid
+        """
+        if not email or not isinstance(email, str):
+            raise InvalidEmailError(email, "Email is required and must be a string")
+
+        email = email.strip()
+        if not email:
+            raise InvalidEmailError(email, "Email cannot be empty")
+
+        # RFC 5322 compliant regex pattern (simplified but robust)
+        email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+
+        if not re.match(email_pattern, email):
+            raise InvalidEmailError(
+                email, "Email must be in valid format (user@domain.com)"
+            )
+
+        # Length validation
+        if len(email) > 254:  # RFC 5321 limit
+            raise InvalidEmailError(
+                email,
+                f"Email is too long ({len(email)} characters). Maximum allowed is 254 characters",
+            )
 
 
 class InvalidUsernameError(ValidationError):
@@ -46,22 +81,57 @@ class InvalidUsernameError(ValidationError):
         )
         self.error_code = "INVALID_USERNAME"
 
-
-class InvalidDateFormatError(ValidationError):
-    """Exception raised when date format is invalid."""
-
-    def __init__(self, date_value: str, field_name: str = "date"):
+    @staticmethod
+    def validate_username(username: str) -> None:
         """
-        Initialize invalid date format error.
+        Validate username format and raise InvalidUsernameError if invalid.
 
         Args:
-            date_value (str): Invalid date value
-            field_name (str): Name of the date field
+            username (str): Username to validate
+
+        Raises:
+            InvalidUsernameError: If username format is invalid
         """
-        super().__init__(
-            field=field_name,
-            value=date_value,
-            reason="Invalid date format",
-            valid_format="YYYY-MM-DD or ISO 8601 format",
-        )
-        self.error_code = "INVALID_DATE_FORMAT"
+        if not username or not isinstance(username, str):
+            raise InvalidUsernameError(
+                username, "Username is required and must be a string"
+            )
+
+        username = username.strip()
+        if not username:
+            raise InvalidUsernameError(username, "Username cannot be empty")
+
+        # Length validation
+        if len(username) < 3:
+            raise InvalidUsernameError(
+                username,
+                f"Username is too short ({len(username)} characters). Minimum is 3 characters",
+            )
+
+        if len(username) > 20:
+            raise InvalidUsernameError(
+                username,
+                f"Username is too long ({len(username)} characters). Maximum is 20 characters",
+            )
+
+        # Format validation: only letters, numbers, and underscores
+        username_pattern = r"^[a-zA-Z0-9_]+$"
+        if not re.match(username_pattern, username):
+            raise InvalidUsernameError(
+                username, "Username can only contain letters, numbers, and underscores"
+            )
+
+        # Cannot start or end with underscore
+        if username.startswith("_") or username.endswith("_"):
+            raise InvalidUsernameError(
+                username, "Username cannot start or end with an underscore"
+            )
+
+        # Cannot have consecutive underscores
+        if "__" in username:
+            raise InvalidUsernameError(
+                username, "Username cannot contain consecutive underscores"
+            )
+
+
+# InvalidDateFormatError removed - no date fields in this application

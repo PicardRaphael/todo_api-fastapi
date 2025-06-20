@@ -7,9 +7,14 @@ providing clean data contracts between layers.
 
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 from src.domain.entities.user import User
+from src.shared.exceptions.validation.password import WeakPasswordError
+from src.shared.exceptions.validation.format import (
+    InvalidEmailError,
+    InvalidUsernameError,
+)
 
 
 class LoginRequestDTO(BaseModel):
@@ -28,22 +33,56 @@ class LoginRequestDTO(BaseModel):
 class RegisterRequestDTO(BaseModel):
     """DTO for user registration requests."""
 
-    email: EmailStr = Field(..., description="User email address")
-    username: str = Field(..., min_length=3, max_length=50, description="Username")
-    password: str = Field(..., min_length=8, description="User password")
+    email: str = Field(..., description="User email address")
+    username: str = Field(..., description="Username")
+    password: str = Field(..., description="User password")
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v):
+        """Validate email format using InvalidEmailError."""
+        InvalidEmailError.validate_email(v)
+        return v
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v):
+        """Validate username format using InvalidUsernameError."""
+        InvalidUsernameError.validate_username(v)
+        return v
 
     @field_validator("password")
     @classmethod
     def validate_password(cls, v):
-        """Validate password strength."""
+        """Validate password strength using WeakPasswordError."""
+        requirements = [
+            "At least 8 characters long",
+            "At least one uppercase letter",
+            "At least one lowercase letter",
+            "At least one digit",
+            "At least one special character (!@#$%^&*)",
+        ]
+
+        missing_requirements = []
+
         if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters long")
+            missing_requirements.append("At least 8 characters long")
         if not any(c.isupper() for c in v):
-            raise ValueError("Password must contain at least one uppercase letter")
+            missing_requirements.append("At least one uppercase letter")
         if not any(c.islower() for c in v):
-            raise ValueError("Password must contain at least one lowercase letter")
+            missing_requirements.append("At least one lowercase letter")
         if not any(c.isdigit() for c in v):
-            raise ValueError("Password must contain at least one digit")
+            missing_requirements.append("At least one digit")
+        if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in v):
+            missing_requirements.append("At least one special character (!@#$%^&*)")
+
+        if missing_requirements:
+            raise WeakPasswordError(
+                password_length=len(v),
+                requirements=requirements,
+                missing_requirements=missing_requirements,
+            )
+
         return v
 
     model_config = ConfigDict(
@@ -93,7 +132,7 @@ class UserResponseDTO(BaseModel):
     """DTO for user information in responses."""
 
     id: int = Field(..., description="User ID")
-    email: EmailStr = Field(..., description="User email address")
+    email: str = Field(..., description="User email address")
     username: str = Field(..., description="Username")
     is_active: bool = Field(..., description="Whether user account is active")
     created_at: datetime = Field(..., description="Account creation timestamp")
@@ -168,20 +207,40 @@ class ChangePasswordRequestDTO(BaseModel):
     """DTO for password change requests."""
 
     current_password: str = Field(..., description="Current password")
-    new_password: str = Field(..., min_length=8, description="New password")
+    new_password: str = Field(..., description="New password")
 
     @field_validator("new_password")
     @classmethod
     def validate_new_password(cls, v):
-        """Validate new password strength."""
+        """Validate new password strength using WeakPasswordError."""
+        requirements = [
+            "At least 8 characters long",
+            "At least one uppercase letter",
+            "At least one lowercase letter",
+            "At least one digit",
+            "At least one special character (!@#$%^&*)",
+        ]
+
+        missing_requirements = []
+
         if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters long")
+            missing_requirements.append("At least 8 characters long")
         if not any(c.isupper() for c in v):
-            raise ValueError("Password must contain at least one uppercase letter")
+            missing_requirements.append("At least one uppercase letter")
         if not any(c.islower() for c in v):
-            raise ValueError("Password must contain at least one lowercase letter")
+            missing_requirements.append("At least one lowercase letter")
         if not any(c.isdigit() for c in v):
-            raise ValueError("Password must contain at least one digit")
+            missing_requirements.append("At least one digit")
+        if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in v):
+            missing_requirements.append("At least one special character (!@#$%^&*)")
+
+        if missing_requirements:
+            raise WeakPasswordError(
+                password_length=len(v),
+                requirements=requirements,
+                missing_requirements=missing_requirements,
+            )
+
         return v
 
     model_config = ConfigDict(

@@ -14,8 +14,7 @@ from .authentication import (
     InvalidTokenError,
     ExpiredTokenError,
     MissingTokenError,
-    SessionExpiredError,
-    ConcurrentSessionError,
+    # Session exceptions removed - JWT-based auth
     # New specific exceptions
     UserNotFoundError,
     InvalidPasswordError,
@@ -25,14 +24,13 @@ from .authentication import (
 # Authorization exceptions
 from .authorization import (
     AuthorizationError,
-    InsufficientPermissionsError,
-    ResourceAccessDeniedError,
+    # Advanced authorization exceptions removed
 )
 
 # Rate limiting exceptions
 from .rate_limiting import (
     RateLimitExceededError,
-    IPBlockedError,
+    # IPBlockedError removed - no IP blocking in this app
 )
 
 __all__ = [
@@ -42,17 +40,15 @@ __all__ = [
     "InvalidTokenError",
     "ExpiredTokenError",
     "MissingTokenError",
-    "SessionExpiredError",
-    "ConcurrentSessionError",
+    # Session exceptions removed
     # New specific authentication exceptions
     "UserNotFoundError",
     "InvalidPasswordError",
     "InactiveUserError",
     # Authorization
     "AuthorizationError",
-    "InsufficientPermissionsError",
-    "ResourceAccessDeniedError",
+    # Advanced authorization removed
     # Rate limiting
     "RateLimitExceededError",
-    "IPBlockedError",
+    # IPBlockedError removed
 ]

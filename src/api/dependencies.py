@@ -24,7 +24,7 @@ Utilisation dans les routes :
 - use_cases = Depends(get_todo_use_cases)
 """
 
-from typing import Generator, Annotated
+from typing import Generator, Annotated, Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, SecurityScopes, HTTPBearer
 from sqlalchemy.orm import Session
@@ -40,6 +40,13 @@ from src.application.use_cases.auth_use_cases import AuthUseCases
 
 # Imports Sécurité (JWT)
 from src.infrastructure.auth.jwt_service import JWTService, verify_token, TokenData
+
+# Imports exceptions JWT
+from src.shared.exceptions.auth import (
+    InvalidTokenError,
+    ExpiredTokenError,
+    MissingTokenError,
+)
 
 
 # ===== SCHÉMAS D'AUTHENTIFICATION =====
@@ -124,7 +131,9 @@ async def get_current_user(
         TokenData: Données utilisateur avec user_id, username et scopes validés
 
     Raises:
-        HTTPException 401: Token invalide, expiré ou utilisateur inexistant
+        MissingTokenError: Si le token n'est pas fourni ou est vide
+        InvalidTokenError: Si le token est malformé ou l'utilisateur n'existe pas
+        ExpiredTokenError: Si le token a expiré
         HTTPException 403: Scopes insuffisants pour l'opération demandée
 
     Usage dans les routes :
@@ -147,25 +156,30 @@ async def get_current_user(
         # Format Bearer simple sans scopes
         authenticate_value = "Bearer"
 
-    # Exception standardisée pour tous les cas d'échec d'authentification
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",  # Message générique pour la sécurité
-        headers={"WWW-Authenticate": authenticate_value},
-    )
+    try:
+        # Étape 1 : Validation du token JWT (signature, expiration, format)
+        token_data = verify_token(token)
 
-    # Étape 1 : Validation du token JWT (signature, expiration, format)
-    token_data = verify_token(token)
+        # Étape 2 : Vérification de l'existence de l'utilisateur en base
+        if not token_data.username:
+            raise InvalidTokenError("Token does not contain valid user information")
 
-    # Étape 2 : Vérification de l'existence de l'utilisateur en base
-    if not token_data.username:
-        raise credentials_exception
+        user_repo = SQLiteUserRepository(db)
+        user = await user_repo.get_user_by_username(token_data.username)
+        if not user:
+            # Utilisateur supprimé ou désactivé depuis la génération du token
+            raise InvalidTokenError("User associated with token no longer exists")
 
-    user_repo = SQLiteUserRepository(db)
-    user = await user_repo.get_user_by_username(token_data.username)
-    if not user:
-        # Utilisateur supprimé ou désactivé depuis la génération du token
-        raise credentials_exception
+    except (InvalidTokenError, ExpiredTokenError, MissingTokenError):
+        # Les exceptions JWT remontent directement avec leurs messages spécifiques
+        raise
+    except Exception:
+        # Fallback pour autres erreurs non prévues
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication failed",
+            headers={"WWW-Authenticate": authenticate_value},
+        )
 
     # Étape 3 : Enrichissement avec l'user_id pour les Use Cases
     token_data.user_id = user.id
@@ -181,6 +195,50 @@ async def get_current_user(
             )
 
     return token_data
+
+
+async def get_optional_current_user(
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> Optional[TokenData]:
+    """
+    Dépendance pour l'authentification optionnelle.
+
+    Similaire à get_current_user mais ne lève pas d'exception si le token est absent.
+    Utile pour les endpoints qui fonctionnent avec ou sans authentification.
+
+    Args:
+        token (str, optional): Token JWT optionnel
+        db (Session): Session de base de données
+
+    Returns:
+        TokenData | None: Données utilisateur si token valide, None sinon
+
+    Raises:
+        InvalidTokenError: Si le token fourni est malformé
+        ExpiredTokenError: Si le token fourni a expiré
+    """
+    if not token:
+        return None
+
+    try:
+        # Utilise la même logique que get_current_user mais sans scopes
+        token_data = verify_token(token)
+
+        if not token_data.username:
+            raise InvalidTokenError("Token does not contain valid user information")
+
+        user_repo = SQLiteUserRepository(db)
+        user = await user_repo.get_user_by_username(token_data.username)
+        if not user:
+            raise InvalidTokenError("User associated with token no longer exists")
+
+        token_data.user_id = user.id
+        return token_data
+
+    except (InvalidTokenError, ExpiredTokenError, MissingTokenError):
+        # Les exceptions remontent pour informer le client du problème
+        raise
 
 
 # ===== DÉPENDANCES MÉTIER =====

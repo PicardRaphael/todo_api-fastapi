@@ -95,43 +95,7 @@ class MissingTokenError(AuthenticationError):
         )
 
 
-class SessionExpiredError(AuthenticationError):
-    """Exception raised when user session has expired."""
-
-    def __init__(self, session_id: Optional[str] = None):
-        """
-        Initialize session expired error.
-
-        Args:
-            session_id (str, optional): ID of the expired session
-        """
-        extra_data = {}
-        if session_id:
-            extra_data["session_id"] = session_id
-
-        super().__init__(
-            detail="Session has expired. Please login again.",
-            error_code="SESSION_EXPIRED",
-            extra_data=extra_data,
-        )
-
-
-class ConcurrentSessionError(AuthenticationError):
-    """Exception raised when too many concurrent sessions are detected."""
-
-    def __init__(self, user_id: Union[str, int], max_sessions: int):
-        """
-        Initialize concurrent session error.
-
-        Args:
-            user_id (str|int): ID of the user
-            max_sessions (int): Maximum allowed concurrent sessions
-        """
-        super().__init__(
-            detail=f"Too many concurrent sessions. Maximum {max_sessions} sessions allowed.",
-            error_code="CONCURRENT_SESSION_LIMIT",
-            extra_data={"user_id": user_id, "max_sessions": max_sessions},
-        )
+# Sessions-related exceptions removed - this app uses JWT tokens, not sessions
 
 
 # ===== NEW SPECIFIC AUTHENTICATION EXCEPTIONS =====

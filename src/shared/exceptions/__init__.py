@@ -38,39 +38,34 @@ from .auth import (
     InvalidTokenError,
     ExpiredTokenError,
     MissingTokenError,
-    SessionExpiredError,
-    ConcurrentSessionError,
+    # Session exceptions removed - JWT-based auth
     # New specific authentication exceptions
     UserNotFoundError,
     InvalidPasswordError,
     InactiveUserError,
     # Authorization
     AuthorizationError,
-    InsufficientPermissionsError,
-    ResourceAccessDeniedError,
+    # Advanced authorization exceptions removed
     # Rate limiting
     RateLimitExceededError,
-    IPBlockedError,
+    # IPBlockedError removed
 )
 
 # Validation exceptions (from new structure)
 from .validation import (
     # Base validation
     ValidationError,
-    MultipleValidationErrors,
+    # MultipleValidationErrors removed
     # Format validation
     InvalidEmailError,
     InvalidUsernameError,
-    InvalidDateFormatError,
+    # InvalidDateFormatError removed
     # Password validation
     WeakPasswordError,
     # Length validation
     ValueTooLongError,
     ValueTooShortError,
-    # Field validation
-    RequiredFieldMissingError,
-    InvalidChoiceError,
-    InvalidRangeError,
+    # Field validation exceptions removed
 )
 
 __all__ = [
@@ -99,34 +94,30 @@ __all__ = [
     "InvalidTokenError",
     "ExpiredTokenError",
     "MissingTokenError",
-    "SessionExpiredError",
-    "ConcurrentSessionError",
+    # Session exceptions removed
     # New specific authentication exceptions
     "UserNotFoundError",
     "InvalidPasswordError",
     "InactiveUserError",
     # Authorization
     "AuthorizationError",
-    "InsufficientPermissionsError",
-    "ResourceAccessDeniedError",
+    # Advanced authorization removed
     # Rate limiting
     "RateLimitExceededError",
-    "IPBlockedError",
+    # IPBlockedError removed
     # Validation exceptions
     # Base validation
     "ValidationError",
-    "MultipleValidationErrors",
+    # MultipleValidationErrors removed
     # Format validation
     "InvalidEmailError",
     "InvalidUsernameError",
-    "InvalidDateFormatError",
+    # InvalidDateFormatError removed
     # Password validation
     "WeakPasswordError",
     # Length validation
     "ValueTooLongError",
     "ValueTooShortError",
     # Field validation
-    "RequiredFieldMissingError",
-    "InvalidChoiceError",
-    "InvalidRangeError",
+    # Field validation exceptions removed
 ]

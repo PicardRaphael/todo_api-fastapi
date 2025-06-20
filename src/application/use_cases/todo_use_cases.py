@@ -27,6 +27,11 @@ from typing import List, Optional
 from src.domain.entities.todo import Todo
 from src.domain.repositories.todo_repository import TodoRepository
 from src.application.dtos.todo_dto import TodoCreateDTO, TodoUpdateDTO
+from src.shared.exceptions.domain.todo import (
+    TodoNotFoundError,
+    TodoAccessDeniedError,
+    InvalidPriorityError,
+)
 
 
 class TodoUseCases:
@@ -85,9 +90,7 @@ class TodoUseCases:
         """
         return await self.todo_repository.get_all_by_owner(owner_id)
 
-    async def get_todo_by_id_and_owner(
-        self, todo_id: int, owner_id: int
-    ) -> Optional[Todo]:
+    async def get_todo_by_id_and_owner(self, todo_id: int, owner_id: int) -> Todo:
         """
         Récupère une todo spécifique appartenant à un utilisateur.
 
@@ -101,14 +104,15 @@ class TodoUseCases:
             owner_id (int): Identifiant de l'utilisateur connecté
 
         Returns:
-            Optional[Todo]: La todo si trouvée ET appartenant à l'utilisateur, None sinon
+            Todo: La todo trouvée et appartenant à l'utilisateur
 
-        Cas de retour None :
-            - Todo inexistante
-            - Todo appartenant à un autre utilisateur
-            - ID invalide
+        Raises:
+            TodoNotFoundError: Si la todo n'existe pas ou n'appartient pas à l'utilisateur
         """
-        return await self.todo_repository.get_by_id_and_owner(todo_id, owner_id)
+        todo = await self.todo_repository.get_by_id_and_owner(todo_id, owner_id)
+        if not todo:
+            raise TodoNotFoundError(todo_id=todo_id, owner_id=owner_id)
+        return todo
 
     # ===== CRÉATION =====
 
@@ -118,9 +122,10 @@ class TodoUseCases:
 
         🔄 CONVERSION DTO → ENTITÉ :
         1. Valide les données avec TodoCreateDTO
-        2. Convertit le DTO en entité Todo
-        3. Ajoute automatiquement l'owner_id
-        4. Persiste via le repository
+        2. Valide la priorité si fournie
+        3. Convertit le DTO en entité Todo
+        4. Ajoute automatiquement l'owner_id
+        5. Persiste via le repository
 
         Use Case : "En tant qu'utilisateur, je veux créer une nouvelle tâche"
 
@@ -132,13 +137,17 @@ class TodoUseCases:
             Todo: La todo créée avec son ID généré par la DB
 
         Raises:
-            ValidationError: Si les données du DTO sont invalides
+            InvalidPriorityError: Si la priorité est invalide
             Exception: En cas d'erreur de persistance
 
         Note:
             L'ID est automatiquement généré (None en entrée).
             L'owner_id est automatiquement assigné (sécurité).
         """
+        # Validation de la priorité si fournie
+        if todo_create.priority is not None:
+            self._validate_priority(todo_create.priority)
+
         # Conversion DTO → Entité avec ajout de l'owner_id
         todo = Todo(id=None, owner_id=owner_id, **todo_create.model_dump())
         return await self.todo_repository.create(todo)
@@ -147,15 +156,16 @@ class TodoUseCases:
 
     async def update_todo(
         self, todo_id: int, todo_update: TodoUpdateDTO, owner_id: int
-    ) -> Optional[Todo]:
+    ) -> Todo:
         """
         Met à jour partiellement une todo existante.
 
         🎯 MISE À JOUR PARTIELLE (PATCH) :
         1. Vérifie que la todo existe et appartient à l'utilisateur
-        2. Extrait uniquement les champs fournis (exclude_unset=True)
-        3. Fusionne avec les données existantes (model_copy)
-        4. Persiste les modifications
+        2. Valide la priorité si fournie dans la mise à jour
+        3. Extrait uniquement les champs fournis (exclude_unset=True)
+        4. Fusionne avec les données existantes (model_copy)
+        5. Persiste les modifications
 
         🛡️ SÉCURITÉ : Vérification de propriété avant modification.
 
@@ -172,35 +182,48 @@ class TodoUseCases:
             owner_id (int): Identifiant du propriétaire
 
         Returns:
-            Optional[Todo]: La todo mise à jour, None si inexistante ou pas propriétaire
+            Todo: La todo mise à jour
+
+        Raises:
+            TodoNotFoundError: Si la todo n'existe pas ou n'appartient pas à l'utilisateur
+            InvalidPriorityError: Si la priorité fournie est invalide
 
         Workflow détaillé :
             1. Récupération sécurisée de la todo existante
-            2. Extraction des champs modifiés (exclude_unset=True)
-            3. Fusion intelligente avec model_copy(update=...)
-            4. Persistance via repository
+            2. Validation de la priorité si fournie
+            3. Extraction des champs modifiés (exclude_unset=True)
+            4. Fusion intelligente avec model_copy(update=...)
+            5. Persistance via repository
         """
         # Étape 1 : Vérification d'existence et de propriété
         existing_todo = await self.todo_repository.get_by_id_and_owner(
             todo_id, owner_id
         )
         if not existing_todo:
-            return None  # Todo inexistante ou pas propriétaire
+            raise TodoNotFoundError(todo_id=todo_id, owner_id=owner_id)
 
-        # Étape 2 : Extraction des champs à mettre à jour
+        # Étape 2 : Validation de la priorité si fournie
+        if todo_update.priority is not None:
+            self._validate_priority(todo_update.priority)
+
+        # Étape 3 : Extraction des champs à mettre à jour
         # exclude_unset=True → uniquement les champs fournis dans la requête
         update_data = todo_update.model_dump(exclude_unset=True)
 
-        # Étape 3 : Fusion intelligente des données
+        # Étape 4 : Fusion intelligente des données
         # model_copy(update=...) crée une nouvelle instance avec les champs mis à jour
         updated_todo = existing_todo.model_copy(update=update_data)
 
-        # Étape 4 : Persistance
-        return await self.todo_repository.update(todo_id, updated_todo)
+        # Étape 5 : Persistance
+        result = await self.todo_repository.update(todo_id, updated_todo)
+        if not result:
+            # Cette situation ne devrait pas arriver car on a vérifié l'existence
+            raise TodoNotFoundError(todo_id=todo_id, owner_id=owner_id)
+        return result
 
     # ===== SUPPRESSION =====
 
-    async def delete_todo(self, todo_id: int, owner_id: int) -> bool:
+    async def delete_todo(self, todo_id: int, owner_id: int) -> None:
         """
         Supprime définitivement une todo.
 
@@ -215,20 +238,34 @@ class TodoUseCases:
             todo_id (int): Identifiant de la todo à supprimer
             owner_id (int): Identifiant du propriétaire
 
-        Returns:
-            bool: True si suppression réussie, False si todo inexistante ou pas propriétaire
+        Raises:
+            TodoNotFoundError: Si la todo n'existe pas ou n'appartient pas à l'utilisateur
 
         Workflow :
             1. Vérification d'existence et de propriété
             2. Suppression définitive si validée
-            3. Retour du statut de l'opération
         """
         # Vérification de propriété avant suppression
         existing_todo = await self.todo_repository.get_by_id_and_owner(
             todo_id, owner_id
         )
         if not existing_todo:
-            return False  # Todo inexistante ou pas propriétaire
+            raise TodoNotFoundError(todo_id=todo_id, owner_id=owner_id)
 
         # Suppression définitive
-        return await self.todo_repository.delete(todo_id)
+        await self.todo_repository.delete(todo_id)
+
+    # ===== MÉTHODES PRIVÉES DE VALIDATION =====
+
+    def _validate_priority(self, priority: int) -> None:
+        """
+        Valide que la priorité est dans la plage autorisée.
+
+        Args:
+            priority (int): Priorité à valider
+
+        Raises:
+            InvalidPriorityError: Si la priorité n'est pas entre 1 et 5
+        """
+        if not isinstance(priority, int) or priority < 1 or priority > 5:
+            raise InvalidPriorityError(priority=priority, valid_range="1-5")

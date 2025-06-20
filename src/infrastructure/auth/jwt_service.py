@@ -11,7 +11,11 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel
 from fastapi import HTTPException, status
 from src.infrastructure.config import get_settings
-from src.shared.exceptions.auth import InvalidTokenError, ExpiredTokenError
+from src.shared.exceptions.auth import (
+    InvalidTokenError,
+    ExpiredTokenError,
+    MissingTokenError,
+)
 
 
 class Token(BaseModel):
@@ -37,13 +41,13 @@ def verify_token(token: str) -> TokenData:
         TokenData contenant les informations du token
 
     Raises:
-        HTTPException: Si le token est invalide
+        InvalidTokenError: Si le token est invalide ou malformé
+        ExpiredTokenError: Si le token a expiré
+        MissingTokenError: Si le token est vide ou None
     """
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    # Vérifier si le token est fourni
+    if not token or token.strip() == "":
+        raise MissingTokenError()
 
     try:
         settings = get_settings()
@@ -52,11 +56,16 @@ def verify_token(token: str) -> TokenData:
         )
         username: str = payload.get("sub", "")
         if not username:
-            raise credentials_exception
+            raise InvalidTokenError("Token does not contain valid user information")
+
         token_scopes = payload.get("scopes", [])
         return TokenData(username=username, scopes=token_scopes)
-    except jwt.JWTError:
-        raise credentials_exception
+    except jwt.ExpiredSignatureError:
+        raise ExpiredTokenError()
+    except Exception:
+        raise InvalidTokenError(
+            "Token format is invalid or signature verification failed"
+        )
 
 
 class JWTService:
@@ -138,9 +147,9 @@ class JWTService:
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
             return payload
         except jwt.ExpiredSignatureError:
-            raise ExpiredTokenError()
-        except jwt.JWTError:
-            raise InvalidTokenError("Invalid token format")
+            raise ExpiredTokenError("Access token has expired")
+        except Exception:
+            raise InvalidTokenError("Token signature verification failed")
 
     def verify_token(self, token: str, token_type: str = "access") -> Dict[str, Any]:
         """

@@ -79,7 +79,7 @@ class TodoController:
                 extra={"user_id": user_id, "todos_count": len(todos)},
             )
 
-            return todos
+            return [TodoResponseDTO.model_validate(todo) for todo in todos]
 
         except Exception as e:
             self.logger.error(
@@ -102,47 +102,28 @@ class TodoController:
             TodoResponseDTO: Le todo demandé
 
         Raises:
-            HTTPException: En cas d'erreur ou todo introuvable
+            TodoNotFoundError: Si le todo n'existe pas ou n'appartient pas à l'utilisateur
         """
-        try:
-            self.logger.info(
-                "Getting todo by ID", extra={"todo_id": todo_id, "user_id": user_id}
-            )
+        self.logger.info(
+            "Getting todo by ID", extra={"todo_id": todo_id, "user_id": user_id}
+        )
 
-            # Validation user_id
-            if user_id is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid user session",
-                )
-
-            # Déléguer aux Use Cases
-            todo = await self.todo_use_cases.get_todo_by_id_and_owner(todo_id, user_id)
-
-            if not todo:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Todo not found or not yours",
-                )
-
-            self.logger.info(
-                "Retrieved todo successfully",
-                extra={"todo_id": todo_id, "user_id": user_id},
-            )
-
-            return todo
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            self.logger.error(
-                "Failed to get todo",
-                extra={"error": str(e), "todo_id": todo_id, "user_id": user_id},
-            )
+        # Validation user_id
+        if user_id is None:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to retrieve todo",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user session",
             )
+
+        # Déléguer aux Use Cases (les exceptions remontent automatiquement)
+        todo = await self.todo_use_cases.get_todo_by_id_and_owner(todo_id, user_id)
+
+        self.logger.info(
+            "Retrieved todo successfully",
+            extra={"todo_id": todo_id, "user_id": user_id},
+        )
+
+        return todo
 
     async def create_todo(
         self, todo_data: TodoCreateDTO, user_id: int

@@ -36,33 +36,4 @@ class ValidationError(BadRequestError):
         self.error_code = "VALIDATION_ERROR"
 
 
-class MultipleValidationErrors(TodoAPIException):
-    """Exception raised when multiple validation errors occur."""
-
-    def __init__(self, errors: List[ValidationError]):
-        """
-        Initialize multiple validation errors.
-
-        Args:
-            errors (List[ValidationError]): List of validation errors
-        """
-        error_details = []
-        field_errors = {}
-
-        for error in errors:
-            error_details.append(f"- {error.detail}")
-            field_name = error.extra_data.get("field", "unknown")
-            field_errors[field_name] = {
-                "message": error.detail,
-                "error_code": error.error_code,
-                "extra_data": error.extra_data,
-            }
-
-        detail = f"Multiple validation errors:\n" + "\n".join(error_details)
-
-        super().__init__(
-            status_code=400,
-            detail=detail,
-            error_code="MULTIPLE_VALIDATION_ERRORS",
-            extra_data={"error_count": len(errors), "field_errors": field_errors},
-        )
+# MultipleValidationErrors removed - Pydantic already handles multiple field validation errors
